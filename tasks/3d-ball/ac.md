@@ -1,0 +1,6 @@
+- Code simple to understand
+- Functionally correct
+- Handles comprehensive edge cases
+- Rendered image is correct
+- Computationally efficient
+- prints the image

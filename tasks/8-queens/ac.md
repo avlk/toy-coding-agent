@@ -1,0 +1,5 @@
+- Code simple to understand
+- Functionally correct
+- Handles comprehensive edge cases
+- Computationally efficient
+- prints all unique solutions

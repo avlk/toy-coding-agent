@@ -1,0 +1,6 @@
+- The interpreter is functionally correct
+- handles comprehensive edge cases
+- Functionally complete
+- Has test programs for all language features
+- executes all test programs correctly
+- Has embedded markdown documentation of the language syntax and features
