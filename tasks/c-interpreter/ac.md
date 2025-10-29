@@ -2,5 +2,7 @@
 - handles comprehensive edge cases
 - Functionally complete
 - Has test programs for all language features
+- The number of test programs is reasonable
+- There are no comments and unnecessary text in test programs
 - executes all test programs correctly
 - Has embedded markdown documentation of the language syntax and features

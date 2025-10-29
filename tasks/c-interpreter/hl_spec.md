@@ -41,8 +41,8 @@ At the end of test run, total number of tests and number of passed tests shall b
 A test suite shall include, among others, tests for: recursion, complex expressions inside function call parameters and control structures.
 
 The number of test programs shall be kept reasonable (preferably below 100) to not overflow the LLM context window.
-
-Do minimization of the test program number by combining multiple tests into one where possible.
+Minimize test program number by combining multiple tests into one where possible.
+Minimize test program length to save program size and do not insert comments into test cases.
 
 An embedded markdown documentation of the language syntax and features shall be provided as a multi-line string variable called LANGUAGE_SPECIFICATION.
 

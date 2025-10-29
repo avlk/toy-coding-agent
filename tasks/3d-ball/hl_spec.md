@@ -13,3 +13,5 @@ No colours are needed, just ASCII characters.
 Take into account that the characters are taller than they are wide, the ratio is approximately 2:1 height to width.
 
 The program should print the image.
+
+Make sure that the tests are runnable by using the code_execution tool before submitting the result.

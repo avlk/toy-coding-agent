@@ -10,6 +10,7 @@ import os
 import random
 import re
 import sys
+import json
 from pathlib import Path
 from google import genai
 
@@ -22,15 +23,22 @@ llm_model = "gemini-2.5-flash"
 print(f"📡 Initializing Gemini LLM ({llm_model})...")
 llm = genai.Client(api_key=api_key)
 llm_config = genai.types.GenerateContentConfig(
-#    system_instruction='I say high, you say low',
-#    max_output_tokens=3,
     temperature=0.3,
     tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)]
 )
 
-def llm_query(query):
+llm_config_goals_check = genai.types.GenerateContentConfig(
+    temperature=0.3,
+    responseMimeType="text/x.enum",
+    responseSchema={
+        "type": "string",
+        "enum": ["Yes", "No"],
+    },
+)
+
+def llm_query(query, config=llm_config):
     response = llm.models.generate_content(
-        model=llm_model, contents=query, config=llm_config
+        model=llm_model, contents=query, config=config
     )
     # If there are multiple parts, return them as a list
     text = response.text
@@ -46,54 +54,44 @@ def llm_query(query):
             output = part.code_execution_result.output
             result = part.code_execution_result.outcome
     
-    return {"text": text, "code": code, "output": output, "result": result}
+    return {"text": text, "code": code, "output": output, "result": result, "full": response}
 
 # --- Utility Functions ---
 def load_file(filepath: str) -> str:
     with open(filepath, "r") as f:
         return f.read()
 
-def generate_prompt(use_case: str, goals: str, previous_code: str = "", feedback: str = "") -> str:
+def generate_prompt(use_case: str, goals: str, previous_code: str = None, feedback: str = None) -> str:
     print("📝 Constructing prompt for code generation...")
-    base_prompt = f"""
-        You are an AI coding agent. Your job is to write Python code based on the following use case:
-        # Use Case: 
-        {use_case}
-        
-        # Your goals are:
-        {goals}
-    """
+
     if previous_code:
         print("🔄 Adding previous code to the prompt for refinement.")
-        base_prompt += f"\nPreviously generated code:\n{previous_code}"
-    if feedback:
-        print("📋 Including feedback for revision.")
-        base_prompt += f"\nFeedback on previous version:\n{feedback}\n"
-    base_prompt += "\nPlease return only the revised Python code. Do not include comments or explanations outside the code."
+        script_path = "scripts/coder fix.md"
+    else:
+        script_path = "scripts/coder create.md"
+
+    script = load_file(script_path)
+    base_prompt = script.format_map({
+        "use_case": use_case,
+        "goals": goals,
+        "previous_code": previous_code,
+        "feedback": feedback
+    })
+
     return base_prompt
 
-def get_code_feedback(code: str, goals: str, code_execution: str, code_execution_result: str) -> str:
+def get_code_feedback(use_case: str, code: str, goals: str, code_execution: str, code_execution_result: str) -> str:
     print("🔍 Evaluating code against the goals...")
-    feedback_prompt = f"""
-You are a Python code reviewer. A code snippet is shown below. Based on the following goals:
-{goals}
-Also provided are the results of executing the program and its output.
-Please critique this code and identify if the goals are met. 
-Examine unit test output listed in the Program output run and identify if there are any failures or issues. Specifically request to fix all failed tests by listing them clearly.
-Mention if improvements are needed for clarity, simplicity, correctness, edge case handling, or test coverage.
-Avoid polite language; be direct and specific about what needs to be improved. Classify issues as Minor, Major, or Critical. 
-Here, Minor means small improvements, that may be or may be not implemented after your review.
-Major means significant changes needed and they have to be implemented, and Critical means the code does not meet the goal at all.
-If the code seems totally broken and you don't think it can be fixed, use its_totally_broken(issue) tool to report the issue.
-Code:
-{code}
 
-Program Execution Result:
-{code_execution_result}
-
-Program output:
-{code_execution}
-"""
+    script_path = "scripts/reviewer.md"
+    script = load_file(script_path)
+    feedback_prompt = script.format_map({
+        "use_case": use_case,
+        "goals": goals,
+        "code": code,
+        "code_execution": code_execution,
+        "code_execution_result": code_execution_result
+    })
     return llm_query(feedback_prompt)["text"]
 
 def goals_met(feedback_text: str, goals: str) -> bool:
@@ -101,22 +99,15 @@ def goals_met(feedback_text: str, goals: str) -> bool:
     Uses the LLM to evaluate whether the goals have been met based on the feedback text.
     Returns True or False (parsed from LLM output).
     """
-    review_prompt = f"""
-        You are an AI reviewer.
-        Here are the goals:
-        {goals}
-        Here is the feedback on the code:
-        \"\"\"
-        {feedback_text}
-        \"\"\"
-        Based on the feedback above, have the goals been met? If there are any unmet goals, respond with False. 
-        If there are corrections needed, return False. If there are any issues higher then Minor, return False.
-        If some goals are only partially (or mostly) met, respond with False.
-        Otherwise, respond with True.
-        Respond with only one word: True or False.
-    """
-    response = llm_query(review_prompt)["text"].strip().lower()
-    return response == "true"
+    script_path = "scripts/goals check.md"
+    script = load_file(script_path)
+    review_prompt = script.format_map({
+        "goals": goals,
+        "feedback_text": feedback_text
+    })  
+    response = llm_query(review_prompt, config=llm_config_goals_check)["text"].strip().lower()
+    print(f"🎯 Goals met evaluation: {response}")
+    return response == "yes"
 
 def clean_code_block(code: str) -> str:
     lines = code.strip().splitlines()
@@ -165,14 +156,18 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
     
     filename = create_short_filename(use_case)
 
-    previous_code = ""
-    feedback = ""
+    previous_code = None
+    feedback = None
     for i in range(max_iterations):
         print(f"\n=== 🔁 Iteration {i + 1} of {max_iterations} ===")
         prompt = generate_prompt(use_case, goals, previous_code, feedback)
         
         print("🚧 Generating code...")
         code_response = llm_query(prompt)
+        # Save JSON response for debugging
+        with open(f"solutions/{filename}_debug_response_v{i+1}.json", "w") as f:
+           f.write(code_response["full"].model_dump_json(indent=2))
+
         raw_code = code_response["code"].strip() if code_response["code"] else code_response["text"].strip() 
         code_output = code_response["output"]
         code_result = code_response["result"]
@@ -186,7 +181,7 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
         save_to_file(code_filename, code)
 
         print("\n📤 Submitting code for feedback review...")
-        feedback = get_code_feedback(code, goals, code_output, code_result)
+        feedback = get_code_feedback(use_case, code, goals, code_output, code_result)
         feedback_text = feedback.strip()
         print("\n📥 Feedback Received:\n" + "-" * 50 + f"\n{feedback_text}\n" + "-" * 50)
 

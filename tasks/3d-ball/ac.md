@@ -1,6 +1,8 @@
 - Code simple to understand
 - Functionally correct
 - Handles comprehensive edge cases
-- Rendered image is correct
 - Computationally efficient
-- prints the image
+- Prints the image
+- Rendered image is correct
+- Covered by unit tests
+- All tests pass
