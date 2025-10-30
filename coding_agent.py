@@ -11,15 +11,17 @@ import random
 import re
 import sys
 import json
+import unidiff
 from pathlib import Path
 from google import genai
+from patch import patch_code, fix_patch, is_unified_diff
 
 # Initialize Gemini LLM
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY environment variable not set")
 
-llm_model = "gemini-2.5-flash"
+llm_model = "gemini-2.5-flash-lite"
 print(f"📡 Initializing Gemini LLM ({llm_model})...")
 llm = genai.Client(api_key=api_key)
 llm_config = genai.types.GenerateContentConfig(
@@ -110,12 +112,12 @@ def goals_met(feedback_text: str, goals: str) -> bool:
     return response == "yes"
 
 def clean_code_block(code: str) -> str:
-    lines = code.strip().splitlines()
+    lines = code.splitlines()
     if lines and lines[0].strip().startswith("```"):
         lines = lines[1:]
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
-    return "\n".join(lines).strip()
+    return "\n".join(lines)
 
 def add_comment_header(code: str, use_case: str) -> str:
     comment = []
@@ -168,10 +170,27 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
         with open(f"solutions/{filename}_debug_response_v{i+1}.json", "w") as f:
            f.write(code_response["full"].model_dump_json(indent=2))
 
-        raw_code = code_response["code"].strip() if code_response["code"] else code_response["text"].strip() 
+        text_out = code_response["code"] if code_response["code"] else code_response["text"] 
         code_output = code_response["output"]
         code_result = code_response["result"]
-        code = clean_code_block(raw_code)
+        text_out = clean_code_block(text_out)
+
+        patch_lines = text_out.splitlines()
+        if is_unified_diff(patch_lines):
+            print("🛠️ Detected unified diff patch. Applying patch to previous code.")
+            patch_filename = f"{filename}_v{i+1}.patch"
+            print(f"💾 Saving intermediate code to file {patch_filename}")
+            save_to_file(patch_filename, "\n".join(patch_lines))
+
+            if previous_code is None:
+                raise ValueError("No previous code to apply patch to.")
+            prev_code_lines = previous_code.splitlines()
+            fix_patch(patch_lines)
+            patch_code(prev_code_lines, patch_lines)
+            code = '\n'.join(prev_code_lines)
+        else:
+            code = text_out
+
         print("\n🧾 Generated Code:\n" + "-" * 50 + f"\n{code}\n" + "-" * 50)
         if code_output:
             print("\n💻 Code Execution Output:\n" + "-" * 50 + f"\n{code_output}\n" + "-" * 50)

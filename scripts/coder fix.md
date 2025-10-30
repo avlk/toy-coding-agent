@@ -12,4 +12,5 @@ You are an AI coding agent. Your job is to refine Python code for the following 
 # Feedback on previous version:
 {feedback}
 
-Please return only the revised Python code. Do not include comments or explanations outside the code.
+You have to provide only the patch (unified diff format) to the revised Python code.
+Do not include comments or explanations outside the code.
