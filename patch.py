@@ -38,7 +38,7 @@ def fix_patch(patch: list[str]) -> None:
     # Process each hunk to fix the header
     for hunk in hunks:
         header_line = patch[hunk.start]
-        print(f"Processing hunk header: {header_line.strip()}")
+        # print(f"Processing hunk header: {header_line.strip()}")
         
         # Count lines
         removed = 0
@@ -98,16 +98,24 @@ def apply_hunk(code_lines: list[str], hunk: unidiff.Hunk, adjust_start: int) -> 
     start_index += adjust_start
     
     hunk_match = check_hunk_start(code_lines, hunk, start_index)
-
+    adjustment = 0
     if not hunk_match:
+        # Create a list of possible offsets a 1,-1,2,-2,...5,-5, up to max_offset
+        max_offset = 200
+        offsets = []
+        for i in range(1, max_offset + 1):
+            offsets.append(i)
+            offsets.append(-i)
+
         # Find the correct starting position
-        for offset in range(-5, 6):
+        for offset in offsets:
             test_start = start_index + offset
             if test_start < 1:
                 continue
             hunk_match = check_hunk_start(code_lines, hunk, test_start)
             if hunk_match:
-                print(f"Adjusted hunk start from line {start_index} to {test_start}")
+                print(f"Adjusted hunk start from line {start_index} to {test_start} (diff {test_start - start_index}, adjust_start {adjust_start})")
+                adjustment = test_start - start_index
                 start_index = test_start
                 break
         if not hunk_match:
@@ -118,12 +126,13 @@ def apply_hunk(code_lines: list[str], hunk: unidiff.Hunk, adjust_start: int) -> 
     # # Build the new lines from the hunk
     new_lines = [line.value for line in hunk if not line.is_removed]
     # Replace start_index to start_index + removed_lines with new_lines
-    print(f"Replacing lines {start_index} to {start_index + hunk.source_length} with {len(new_lines)} new lines.")
+    # print(f"Replacing lines {start_index} to {start_index + hunk.source_length} with {len(new_lines)} new lines.")
     code_lines[start_index-1:start_index + hunk.source_length-1] = new_lines
 
     added_lines = sum(1 for line in hunk if line.is_added)
     removed_lines = sum(1 for line in hunk if line.is_removed)
-    return added_lines - removed_lines
+    # Adjust next line offset by difference of lines + hunk adjustment made
+    return added_lines - removed_lines + adjustment
 
 def patch_code(code: list[str], patch_lines: list[str]) -> None:
     patch_set = unidiff.PatchSet(patch_lines)
@@ -131,13 +140,15 @@ def patch_code(code: list[str], patch_lines: list[str]) -> None:
     for patched_file in patch_set:
         print(f"Patching file: {patched_file.path}")
         for hunk in patched_file:
-            print(f"Hunk from line {hunk.source_start} to {hunk.source_start + hunk.source_length} in original, "
-                f"line {hunk.target_start} to {hunk.target_start + hunk.target_length} in patched.")
+            # print(f"Hunk from line {hunk.source_start} to {hunk.source_start + hunk.source_length} in original, "
+            #     f"line {hunk.target_start} to {hunk.target_start + hunk.target_length} in patched.")
             adjust_start += apply_hunk(code, hunk, adjust_start)
 
 if __name__ == "__main__":
-    original_file_name = "test_sets/patch/nqueens_6702_v1.py"
-    patch_file_name = "test_sets/patch/nqueens_6702_v2.py"
+    # original_file_name = "test_sets/patch/nqueens_6702_v1.py"
+    # patch_file_name = "test_sets/patch/nqueens_6702_v2.py"
+    original_file_name = "test_sets/patch/interp_5165_v1.py"
+    patch_file_name = "test_sets/patch/interp_5165_v2.patch"
 
     with open(original_file_name, 'r') as original_file:
         original_content = original_file.read()
@@ -165,5 +176,5 @@ if __name__ == "__main__":
 
     patched_code = '\n'.join(code_lines)
     print("----- Patched Code -----")
-    print(patched_code)
+    # print(patched_code)
 

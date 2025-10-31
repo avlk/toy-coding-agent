@@ -3,3 +3,5 @@
 - Handles comprehensive edge cases
 - Computationally efficient
 - prints all unique solutions
+- unit tests are present
+- unit tests run with no errors

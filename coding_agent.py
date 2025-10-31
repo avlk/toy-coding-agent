@@ -12,6 +12,7 @@ import re
 import sys
 import json
 import unidiff
+import time
 from pathlib import Path
 from google import genai
 from patch import patch_code, fix_patch, is_unified_diff
@@ -21,7 +22,7 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY environment variable not set")
 
-llm_model = "gemini-2.5-flash-lite"
+llm_model = "gemini-2.5-flash"
 print(f"📡 Initializing Gemini LLM ({llm_model})...")
 llm = genai.Client(api_key=api_key)
 llm_config = genai.types.GenerateContentConfig(
@@ -39,9 +40,14 @@ llm_config_goals_check = genai.types.GenerateContentConfig(
 )
 
 def llm_query(query, config=llm_config):
+    # mark start time
+    start_time = time.monotonic()
     response = llm.models.generate_content(
         model=llm_model, contents=query, config=config
     )
+    end_time = time.monotonic()
+    # Calculate generation time in seconds
+    generation_time = end_time - start_time
     # If there are multiple parts, return them as a list
     text = response.text
     code = None
@@ -56,7 +62,19 @@ def llm_query(query, config=llm_config):
             output = part.code_execution_result.output
             result = part.code_execution_result.outcome
     
-    return {"text": text, "code": code, "output": output, "result": result, "full": response}
+    return {"text": text, "output": output, "result": result, "full": response, "usage": response.usage_metadata, "response_time": generation_time}
+
+def print_usage_info(metadata, time):
+
+    print("Token Usage Info: total {}, cache {}, candidates {}, prompt {}, thoughts {}, tool_use {}".format(
+        metadata.total_token_count,
+        metadata.cached_content_token_count,
+        metadata.candidates_token_count,
+        metadata.prompt_token_count,
+        metadata.thoughts_token_count,
+        metadata.tool_use_prompt_token_count
+    ))
+    print(f"Time taken for LLM call: {time:.1f} seconds")
 
 # --- Utility Functions ---
 def load_file(filepath: str) -> str:
@@ -170,7 +188,8 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
         with open(f"solutions/{filename}_debug_response_v{i+1}.json", "w") as f:
            f.write(code_response["full"].model_dump_json(indent=2))
 
-        text_out = code_response["code"] if code_response["code"] else code_response["text"] 
+        print_usage_info(code_response["usage"], code_response["response_time"])
+        text_out = code_response["text"]
         code_output = code_response["output"]
         code_result = code_response["result"]
         text_out = clean_code_block(text_out)
@@ -191,9 +210,9 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
         else:
             code = text_out
 
-        print("\n🧾 Generated Code:\n" + "-" * 50 + f"\n{code}\n" + "-" * 50)
-        if code_output:
-            print("\n💻 Code Execution Output:\n" + "-" * 50 + f"\n{code_output}\n" + "-" * 50)
+        # print("\n🧾 Generated Code:\n" + "-" * 50 + f"\n{code}\n" + "-" * 50)
+        # if code_output:
+        #     print("\n💻 Code Execution Output:\n" + "-" * 50 + f"\n{code_output}\n" + "-" * 50)
 
         code_filename = f"{filename}_v{i+1}.py"
         print(f"💾 Saving intermediate code to file {code_filename}")
@@ -202,7 +221,7 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
         print("\n📤 Submitting code for feedback review...")
         feedback = get_code_feedback(use_case, code, goals, code_output, code_result)
         feedback_text = feedback.strip()
-        print("\n📥 Feedback Received:\n" + "-" * 50 + f"\n{feedback_text}\n" + "-" * 50)
+        # print("\n📥 Feedback Received:\n" + "-" * 50 + f"\n{feedback_text}\n" + "-" * 50)
 
         review_filename = f"{filename}_review_v{i+1}.txt"
         print(f"💾 Saving review to file {review_filename}")
