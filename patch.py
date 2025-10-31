@@ -136,8 +136,8 @@ def patch_code(code: list[str], patch_lines: list[str]) -> None:
             adjust_start += apply_hunk(code, hunk, adjust_start)
 
 if __name__ == "__main__":
-    original_file_name = "solutions/nqueens_6702_v1.py"
-    patch_file_name = "solutions/nqueens_6702_v2.py"
+    original_file_name = "test_sets/patch/nqueens_6702_v1.py"
+    patch_file_name = "test_sets/patch/nqueens_6702_v2.py"
 
     with open(original_file_name, 'r') as original_file:
         original_content = original_file.read()
