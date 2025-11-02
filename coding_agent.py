@@ -22,12 +22,46 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY environment variable not set")
 
-llm_model = "gemini-2.5-flash"
+llm_model = "gemini-2.5-pro"
 print(f"📡 Initializing Gemini LLM ({llm_model})...")
 llm = genai.Client(api_key=api_key)
 llm_config = genai.types.GenerateContentConfig(
     temperature=0.3,
     tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)]
+)
+
+llm_config_coder = genai.types.GenerateContentConfig(
+    temperature=0.3,
+    tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)],
+    responseMimeType="text/x.enum",
+    responseSchema={
+        "type": "object",
+        "properties": {
+            "reasoning": {
+                "type": "string",
+                "description": "The detailed explanation and justification for the code changes."
+            },
+            "code": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "The complete, corrected source code file content, as an array of strings (lines)."
+            },
+            "diff": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "The minimal patch (e.g., unified diff format), as an array of strings (lines)."
+            },
+            "test_results": {
+                "type": "string",
+                "description": "Results of the test cases executed."
+            }
+        },
+        "required": ["reasoning", "test_results"]
+    },
 )
 
 llm_config_goals_check = genai.types.GenerateContentConfig(
@@ -48,24 +82,11 @@ def llm_query(query, config=llm_config):
     end_time = time.monotonic()
     # Calculate generation time in seconds
     generation_time = end_time - start_time
-    # If there are multiple parts, return them as a list
     text = response.text
-    code = None
-    output = None
-    result = None
-    
-    # print(response)
-    for part in response.candidates[0].content.parts:
-        if part.executable_code:
-            code = part.executable_code.code
-        if part.code_execution_result:
-            output = part.code_execution_result.output
-            result = part.code_execution_result.outcome
-    
-    return {"text": text, "output": output, "result": result, "full": response, "usage": response.usage_metadata, "response_time": generation_time}
+
+    return {"text": text, "full": response, "usage": response.usage_metadata, "response_time": generation_time}
 
 def print_usage_info(metadata, time):
-
     print("Token Usage Info: total {}, cache {}, candidates {}, prompt {}, thoughts {}, tool_use {}".format(
         metadata.total_token_count,
         metadata.cached_content_token_count,
@@ -100,7 +121,7 @@ def generate_prompt(use_case: str, goals: str, previous_code: str = None, feedba
 
     return base_prompt
 
-def get_code_feedback(use_case: str, code: str, goals: str, code_execution: str, code_execution_result: str) -> str:
+def get_code_feedback(use_case: str, code: str, goals: str, code_output: str) -> str:
     print("🔍 Evaluating code against the goals...")
 
     script_path = "scripts/reviewer.md"
@@ -109,8 +130,7 @@ def get_code_feedback(use_case: str, code: str, goals: str, code_execution: str,
         "use_case": use_case,
         "goals": goals,
         "code": code,
-        "code_execution": code_execution,
-        "code_execution_result": code_execution_result
+        "code_output": code_output
     })
     return llm_query(feedback_prompt)["text"]
 
@@ -175,6 +195,7 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
     print(goals)
     
     filename = create_short_filename(use_case)
+    print(f" 🔁 Base name is {filename} for this run")
 
     previous_code = None
     feedback = None
@@ -183,32 +204,45 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
         prompt = generate_prompt(use_case, goals, previous_code, feedback)
         
         print("🚧 Generating code...")
-        code_response = llm_query(prompt)
-        # Save JSON response for debugging
-        with open(f"solutions/{filename}_debug_response_v{i+1}.json", "w") as f:
-           f.write(code_response["full"].model_dump_json(indent=2))
+        code_response = llm_query(prompt, config=llm_config_coder)
+        
+        print("🧾 Processing LLM output...")
+        try:
+            # Save JSON response for debugging
+            with open(f"solutions/{filename}_debug_response_v{i+1}.json", "w") as f:
+                f.write(code_response["full"].model_dump_json(indent=2))
+            with open(f"solutions/{filename}_debug_response_text_v{i+1}.json", "w") as f:
+                f.write(code_response["text"])
 
-        print_usage_info(code_response["usage"], code_response["response_time"])
-        text_out = code_response["text"]
-        code_output = code_response["output"]
-        code_result = code_response["result"]
-        text_out = clean_code_block(text_out)
+            print_usage_info(code_response["usage"], code_response["response_time"])
+            llm_out = json.loads(clean_code_block(code_response["text"]))
 
-        patch_lines = text_out.splitlines()
-        if is_unified_diff(patch_lines):
-            print("🛠️ Detected unified diff patch. Applying patch to previous code.")
-            patch_filename = f"{filename}_v{i+1}.patch"
-            print(f"💾 Saving intermediate code to file {patch_filename}")
-            save_to_file(patch_filename, "\n".join(patch_lines))
+            with open(f"solutions/{filename}_debug_llm_out_v{i+1}.json", "w") as f:
+                f.write(json.dumps(llm_out, indent=2))
 
-            if previous_code is None:
-                raise ValueError("No previous code to apply patch to.")
-            prev_code_lines = previous_code.splitlines()
-            fix_patch(patch_lines)
-            patch_code(prev_code_lines, patch_lines)
-            code = '\n'.join(prev_code_lines)
-        else:
-            code = text_out
+            is_unified_diff_patch = "diff" in llm_out and len(llm_out["diff"]) > 0
+            code_output = llm_out.get("test_results", "")
+
+            if is_unified_diff_patch:
+                patch_lines = clean_code_block("\n".join(llm_out["diff"])).splitlines()
+                print("🛠️ Detected unified diff patch. Applying patch to previous code.")
+                patch_filename = f"{filename}_v{i+1}.patch"
+                print(f"💾 Saving patch to file {patch_filename}")
+                save_to_file(patch_filename, "\n".join(patch_lines))
+
+                if previous_code is None:
+                    raise ValueError("No previous code to apply patch to.")
+                prev_code_lines = previous_code.splitlines()
+                fix_patch(patch_lines)
+                patch_code(prev_code_lines, patch_lines)
+                code = '\n'.join(prev_code_lines)
+            else:
+                code = "\n".join(llm_out.get("code", []))
+                code = clean_code_block(code)
+        except Exception as e:
+            print(f"❌ Error processing LLM output: {e}")
+            print("Restarting iteration...")
+            continue
 
         # print("\n🧾 Generated Code:\n" + "-" * 50 + f"\n{code}\n" + "-" * 50)
         # if code_output:
@@ -218,8 +252,13 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
         print(f"💾 Saving intermediate code to file {code_filename}")
         save_to_file(code_filename, code)
 
+        if code_output:
+            code_output_filename = f"{filename}_v{i+1}_output.txt"
+            print(f"💾 Saving intermediate code output to file {code_output_filename}")
+            save_to_file(code_output_filename, code_output)
+
         print("\n📤 Submitting code for feedback review...")
-        feedback = get_code_feedback(use_case, code, goals, code_output, code_result)
+        feedback = get_code_feedback(use_case, code, goals, code_output)
         feedback_text = feedback.strip()
         # print("\n📥 Feedback Received:\n" + "-" * 50 + f"\n{feedback_text}\n" + "-" * 50)
 

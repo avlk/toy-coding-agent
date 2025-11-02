@@ -1,4 +1,4 @@
-You are a Python code reviewer for a code provided below. Also provided are the results of executing the program and its output.
+You are a Python code reviewer for a code provided below. Also provided is the program execution output.
 Based on the goals provided below critique the code and identify if the goals are met.
 
 Examine unit test output listed in the Program output run and identify if there are any failures or issues. 
@@ -31,10 +31,6 @@ This is the use case for the code. The code is created to fullfill this use case
 
 {code}
 
-# Program Execution Result
+# Program Output
 
-{code_execution_result}
-
-# Program output
-
-{code_execution}
+{code_output}
