@@ -22,7 +22,8 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY environment variable not set")
 
-llm_model = "gemini-2.5-pro"
+llm_model = "gemini-2.5-flash"
+nonthinking_llm_model = "gemini-2.5-flash-lite"
 print(f"📡 Initializing Gemini LLM ({llm_model})...")
 llm = genai.Client(api_key=api_key)
 llm_config = genai.types.GenerateContentConfig(
@@ -33,6 +34,10 @@ llm_config = genai.types.GenerateContentConfig(
 llm_config_coder = genai.types.GenerateContentConfig(
     temperature=0.3,
     tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)],
+)
+
+llm_config_reformatter = genai.types.GenerateContentConfig(
+    temperature=0,
     responseMimeType="text/x.enum",
     responseSchema={
         "type": "object",
@@ -73,11 +78,11 @@ llm_config_goals_check = genai.types.GenerateContentConfig(
     },
 )
 
-def llm_query(query, config=llm_config):
+def llm_query(query, config=llm_config, model=llm_model):
     # mark start time
     start_time = time.monotonic()
     response = llm.models.generate_content(
-        model=llm_model, contents=query, config=config
+        model=model, contents=query, config=config
     )
     end_time = time.monotonic()
     # Calculate generation time in seconds
@@ -205,6 +210,7 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
         
         print("🚧 Generating code...")
         code_response = llm_query(prompt, config=llm_config_coder)
+        print_usage_info(code_response["usage"], code_response["response_time"])
         
         print("🧾 Processing LLM output...")
         try:
@@ -214,14 +220,29 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
             with open(f"solutions/{filename}_debug_response_text_v{i+1}.json", "w") as f:
                 f.write(code_response["text"])
 
-            print_usage_info(code_response["usage"], code_response["response_time"])
-            llm_out = json.loads(clean_code_block(code_response["text"]))
+            print("running reformatter...")
+            reformat_script = load_file("scripts/reformatter.md")
+            reformat_prompt = reformat_script.format_map({
+                "output": code_response["text"],
+            })
+            
+            reformatter_response = llm_query(reformat_prompt, config=llm_config_reformatter, model=nonthinking_llm_model)
+            print_usage_info(reformatter_response["usage"], reformatter_response["response_time"])
+
+            with open(f"solutions/{filename}_debug_reformatter_v{i+1}.json", "w") as f:
+                f.write(reformatter_response["full"].model_dump_json(indent=2))
+            with open(f"solutions/{filename}_debug_reformatter_text_v{i+1}.json", "w") as f:
+                f.write(reformatter_response["text"])
+
+            llm_out = json.loads(clean_code_block(reformatter_response["text"]))
 
             with open(f"solutions/{filename}_debug_llm_out_v{i+1}.json", "w") as f:
                 f.write(json.dumps(llm_out, indent=2))
 
             is_unified_diff_patch = "diff" in llm_out and len(llm_out["diff"]) > 0
             code_output = llm_out.get("test_results", "")
+            if isinstance(code_output, list):
+                code_output = "\n".join(code_output)
 
             if is_unified_diff_patch:
                 patch_lines = clean_code_block("\n".join(llm_out["diff"])).splitlines()
