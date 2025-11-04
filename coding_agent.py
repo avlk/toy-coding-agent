@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from google import genai
 from patch import patch_code, fix_patch, is_unified_diff
+from md_parser import extract_code_blocks
 
 # Initialize Gemini LLM
 api_key = os.getenv("GEMINI_API_KEY")
@@ -38,35 +39,6 @@ llm_config_coder = genai.types.GenerateContentConfig(
 
 llm_config_reformatter = genai.types.GenerateContentConfig(
     temperature=0,
-    responseMimeType="text/x.enum",
-    responseSchema={
-        "type": "object",
-        "properties": {
-            "reasoning": {
-                "type": "string",
-                "description": "The detailed explanation and justification for the code changes."
-            },
-            "code": {
-                "type": "array",
-                "items": {
-                    "type": "string"
-                },
-                "description": "The complete, corrected source code file content, as an array of strings (lines)."
-            },
-            "diff": {
-                "type": "array",
-                "items": {
-                    "type": "string"
-                },
-                "description": "The minimal patch (e.g., unified diff format), as an array of strings (lines)."
-            },
-            "test_results": {
-                "type": "string",
-                "description": "Results of the test cases executed."
-            }
-        },
-        "required": ["reasoning", "test_results"]
-    },
 )
 
 llm_config_goals_check = genai.types.GenerateContentConfig(
@@ -154,8 +126,11 @@ def goals_met(feedback_text: str, goals: str) -> bool:
     print(f"🎯 Goals met evaluation: {response}")
     return response == "yes"
 
-def clean_code_block(code: str) -> str:
-    lines = code.splitlines()
+def clean_code_block(code) -> str:
+    if not isinstance(code, list):
+        lines = code.splitlines()
+    else:
+        lines = code
     if lines and lines[0].strip().startswith("```"):
         lines = lines[1:]
     if lines and lines[-1].strip() == "```":
@@ -234,18 +209,18 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
             with open(f"solutions/{filename}_debug_reformatter_text_v{i+1}.json", "w") as f:
                 f.write(reformatter_response["text"])
 
-            llm_out = json.loads(clean_code_block(reformatter_response["text"]))
+            llm_out = extract_code_blocks(clean_code_block(reformatter_response["text"]))
 
             with open(f"solutions/{filename}_debug_llm_out_v{i+1}.json", "w") as f:
                 f.write(json.dumps(llm_out, indent=2))
 
-            is_unified_diff_patch = "diff" in llm_out and len(llm_out["diff"]) > 0
-            code_output = llm_out.get("test_results", "")
+            is_unified_diff_patch = "diff" in llm_out
+            code_output = llm_out["shell"][0] if "shell" in llm_out else ""
             if isinstance(code_output, list):
                 code_output = "\n".join(code_output)
 
             if is_unified_diff_patch:
-                patch_lines = clean_code_block("\n".join(llm_out["diff"])).splitlines()
+                patch_lines = clean_code_block(llm_out["diff"][0]).splitlines()
                 print("🛠️ Detected unified diff patch. Applying patch to previous code.")
                 patch_filename = f"{filename}_v{i+1}.patch"
                 print(f"💾 Saving patch to file {patch_filename}")
@@ -258,8 +233,10 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
                 patch_code(prev_code_lines, patch_lines)
                 code = '\n'.join(prev_code_lines)
             else:
-                code = "\n".join(llm_out.get("code", []))
-                code = clean_code_block(code)
+                if "python" in llm_out:
+                    code = clean_code_block(llm_out["python"][0])
+                else:
+                    code = ""
         except Exception as e:
             print(f"❌ Error processing LLM output: {e}")
             print("Restarting iteration...")
