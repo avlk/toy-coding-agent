@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from google import genai
 from patch import patch_code, fix_patch, is_unified_diff
-from md_parser import extract_code_blocks
+from md_parser import find_code_blocks
 
 # Initialize Gemini LLM
 api_key = os.getenv("GEMINI_API_KEY")
@@ -206,35 +206,45 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
 
             with open(f"solutions/{filename}_debug_reformatter_v{i+1}.json", "w") as f:
                 f.write(reformatter_response["full"].model_dump_json(indent=2))
-            with open(f"solutions/{filename}_debug_reformatter_text_v{i+1}.json", "w") as f:
+            with open(f"solutions/{filename}_debug_reformatter_text_v{i+1}.md", "w") as f:
                 f.write(reformatter_response["text"])
 
-            llm_out = extract_code_blocks(clean_code_block(reformatter_response["text"]))
+            text = reformatter_response["text"]
+            code_blocks = find_code_blocks(text, delimiter="~~~", language="python")
+            diff_blocks = find_code_blocks(text, delimiter="~~~", language="diff")
+            out_blocks = find_code_blocks(text, delimiter="~~~", language="shell")
 
-            with open(f"solutions/{filename}_debug_llm_out_v{i+1}.json", "w") as f:
-                f.write(json.dumps(llm_out, indent=2))
+            if code_blocks:
+                with open(f"solutions/{filename}_debug_reformatter_code_v{i+1}.py", "w") as f:
+                    f.write(code_blocks[0])
+            if diff_blocks:
+                with open(f"solutions/{filename}_debug_reformatter_diff_v{i+1}.patch", "w") as f:
+                    f.write(diff_blocks[0])
+            if out_blocks:
+                with open(f"solutions/{filename}_debug_reformatter_out_v{i+1}.txt", "w") as f:
+                    f.write(out_blocks[0])
 
-            is_unified_diff_patch = "diff" in llm_out
-            code_output = llm_out["shell"][0] if "shell" in llm_out else ""
+            code_output = out_blocks[0] if len(out_blocks) > 0 else ""
             if isinstance(code_output, list):
                 code_output = "\n".join(code_output)
 
-            if is_unified_diff_patch:
-                patch_lines = clean_code_block(llm_out["diff"][0]).splitlines()
+            if diff_blocks:
+                patch_lines = clean_code_block(diff_blocks[0]).splitlines()
                 print("🛠️ Detected unified diff patch. Applying patch to previous code.")
                 patch_filename = f"{filename}_v{i+1}.patch"
-                print(f"💾 Saving patch to file {patch_filename}")
-                save_to_file(patch_filename, "\n".join(patch_lines))
 
                 if previous_code is None:
                     raise ValueError("No previous code to apply patch to.")
                 prev_code_lines = previous_code.splitlines()
                 fix_patch(patch_lines)
+                print(f"💾 Saving patch to file {patch_filename}")
+                save_to_file(patch_filename, "\n".join(patch_lines))
+
                 patch_code(prev_code_lines, patch_lines)
                 code = '\n'.join(prev_code_lines)
             else:
-                if "python" in llm_out:
-                    code = clean_code_block(llm_out["python"][0])
+                if code_blocks:
+                    code = clean_code_block(code_blocks[0])
                 else:
                     code = ""
         except Exception as e:

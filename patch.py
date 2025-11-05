@@ -101,7 +101,7 @@ def apply_hunk(code_lines: list[str], hunk: unidiff.Hunk, adjust_start: int) -> 
     adjustment = 0
     if not hunk_match:
         # Create a list of possible offsets a 1,-1,2,-2,...5,-5, up to max_offset
-        max_offset = 200
+        max_offset = 400
         offsets = []
         for i in range(1, max_offset + 1):
             offsets.append(i)
@@ -147,8 +147,10 @@ def patch_code(code: list[str], patch_lines: list[str]) -> None:
 if __name__ == "__main__":
     # original_file_name = "test_sets/patch/nqueens_6702_v1.py"
     # patch_file_name = "test_sets/patch/nqueens_6702_v2.py"
-    original_file_name = "test_sets/patch/interp_5165_v1.py"
-    patch_file_name = "test_sets/patch/interp_5165_v2.patch"
+    # original_file_name = "test_sets/patch/interp_5165_v1.py"
+    # patch_file_name = "test_sets/patch/interp_5165_v2.patch"
+    original_file_name = "test_sets/patch/c_interp_8564_v1.py"
+    patch_file_name = "test_sets/patch/c_interp_8564_v2.patch"
 
     with open(original_file_name, 'r') as original_file:
         original_content = original_file.read()
@@ -172,7 +174,14 @@ if __name__ == "__main__":
     #         # save intermediate result after each hunk
     #         with open(f"intermediate_patched_code{hunk.target_start}.py", 'w') as intermediate_file:
     #             intermediate_file.write('\n'.join(code_lines))
-    patch_code(code_lines, patch_lines)
+    try:
+        patch_code(code_lines, patch_lines)
+    except unidiff.errors.UnidiffParseError as e:
+        print(f"Failed to parse patch: {e}")
+        exit(1)
+    except Exception as e:
+        print(f"Error occurred while patching code: {e}")
+        exit(1)
 
     patched_code = '\n'.join(code_lines)
     print("----- Patched Code -----")

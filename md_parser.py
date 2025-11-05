@@ -25,6 +25,19 @@ def extract_code_blocks(markdown_text):
         code_blocks[lang].append(code)
     return code_blocks
 
+def find_code_blocks(markdown_text, delimiter="~~~", language="python"):
+    # This function extracts code blocks from the given Markdown text
+    # that use the specified delimiter and language.
+    # The code blocks starts with delimiter + language and end with the same delimiter or end of line.
+    # It returns a list of code blocks found.
+    
+    pattern = re.compile(
+        rf'{re.escape(delimiter)}{language}\n(.*?)(?:\n{re.escape(delimiter)}|$)',
+        re.DOTALL
+    )
+    code_blocks = pattern.findall(markdown_text)
+    return code_blocks
+
 if __name__ == "__main__":
     # Go through the files in solutions/*_debug_response_text*.json and extract code blocks for testing
     import os
@@ -56,3 +69,11 @@ if __name__ == "__main__":
                     print(f" {num_lines} lines of diff code from {filename}.")
                     with open(f"solutions/{filename}_code.diff", "w") as out_f:
                         out_f.write(code)
+
+    with open("test_sets/md/the_most_s_9212_debug_reformatter_text_v1.md", "r") as f:
+        markdown_text = f.read()
+        code_blocks = find_code_blocks(markdown_text)
+        print(f"Found code blocks in the broken md: { len(code_blocks) }")
+        for i, code in enumerate(code_blocks):
+            num_lines = len(code.splitlines())
+            print(f" Code block {i} has {num_lines} lines.")
