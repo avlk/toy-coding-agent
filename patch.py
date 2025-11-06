@@ -1,7 +1,9 @@
 import re
-import unidiff
 
+# Hunk header for a normal unified diff
 UNIFIED_DIFF_HUNK_HEADER_REGEX = r'@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@'
+# Hunk header for a unified diff with no line counts like @@ ... @@
+UNIFIED_DIFF_HUNK_HEADER_NO_COUNTS_REGEX = r'@@ \.\.\. @@'
 
 def is_unified_diff(patch: list[str]) -> bool:
     # Check if the patch contains unified diff hunk headers
@@ -10,7 +12,127 @@ def is_unified_diff(patch: list[str]) -> bool:
             return True
     return False
 
-def fix_patch(patch: list[str]) -> None:
+def is_unified_diff_no_counts(patch: list[str]) -> bool:
+    # Check if the patch contains unified diff hunk headers without line counts
+    for line in patch:
+        if re.match(UNIFIED_DIFF_HUNK_HEADER_NO_COUNTS_REGEX, line):
+            return True
+    return False
+
+class Hunk:
+    MAX_STARTING_CONTEXT = 3
+    MAX_TRAILING_CONTEXT = 3
+
+    def __init__(self, header: str, lines: list[str]):
+        # Extract original header info
+        match = re.match(UNIFIED_DIFF_HUNK_HEADER_REGEX, header)
+        if match:
+            self.start_original = int(match.group(1))
+            self.start_new = int(match.group(3))
+        else:
+            self.start_original = 0
+            self.start_new = 0
+        
+        self.fuzzy_match = False
+        self.match = []
+        self.replace = []
+
+        patch_ops = ['+', '-']
+        # count context lines from start
+        starting_context = 0
+        for line in lines:
+            if line[0] in patch_ops:
+                break
+            starting_context += 1
+        # count context lines from end
+        trailing_context = 0
+        for idx in range(len(lines) - 1, -1, -1):
+            if lines[idx][0] in patch_ops:
+                break
+            trailing_context += 1
+
+        # Adjust context lines
+        patch_start = 0
+        patch_end = len(lines)
+        if starting_context > Hunk.MAX_STARTING_CONTEXT:
+            print("Trimmed starting context by", starting_context - Hunk.MAX_STARTING_CONTEXT)
+            patch_start = starting_context - Hunk.MAX_STARTING_CONTEXT
+        if trailing_context > Hunk.MAX_TRAILING_CONTEXT:
+            print("Trimmed trailing context by", trailing_context - Hunk.MAX_TRAILING_CONTEXT)
+            patch_end = len(lines) - (trailing_context - Hunk.MAX_TRAILING_CONTEXT)
+
+        for line in lines[patch_start:patch_end]:
+            if line.startswith('+'):
+                line_content = line[1:]  # Skip the first character (+, -, or space)
+                self.replace.append(line_content)
+            elif line.startswith('-'):
+                line_content = line[1:]  # Skip the first character (+, -, or space)
+                self.match.append(line_content)
+            else:
+                if line[0].isspace():
+                    line_content = line[1:]
+                else:
+                    line_content = line # Fix for faulty LLM patch
+                self.match.append(line_content)
+                self.replace.append(line_content)
+
+    def match_count(self) -> int:
+        return len(self.match)
+    
+    def replace_count(self) -> int:
+        return len(self.replace)
+
+    def trim_comment(self, line):
+        # Remove trailing whitespace
+        line = line.rstrip()
+        # Remove python comment if there is a python comment
+        # For example: "  code # comment" -> "  code"
+        # But not: "  print('#')" as it is not a comment
+        
+        # Regex to match # that's not inside quotes
+        # This pattern matches strings and skips # inside them
+        pattern = r'''(?:[^'"#]|"[^"]*"|'[^']*')*?(?=#|$)'''
+        match = re.match(pattern, line)
+        if match:
+            return match.group(0).rstrip()
+        return line    
+        
+    def matches_code(self, code_lines: list[str], start_line: int) -> bool:
+        # Check if the hunk matches the code lines starting at start_line (0-based)
+        for i in range(self.match_count()):
+            code_index = start_line + i
+            if code_index >= len(code_lines):
+                return False
+
+            code_line = code_lines[code_index]
+            patch_line = self.match[i]
+
+            if self.fuzzy_match:
+                code_line = self.trim_comment(code_line)
+                patch_line = self.trim_comment(patch_line)
+
+            if code_line != patch_line:
+                if i > 3:
+                    print(f"Matched {i}/{self.match_count()} lines starting from {start_line+1}, broke at [{code_index+1}]: {self.match[i]}")
+                return False
+        return True
+
+    def match_code(self, code_lines: list[str], start_line: int) -> int:
+        # Try to match the hunk to code lines starting at start_line (0-based)
+        # Return the line where it matches, or None if no match
+        for i in range(start_line, len(code_lines) - self.match_count() + 1):
+            if self.matches_code(code_lines, i):
+                return i
+        return None
+
+    def set_fuzzy_match(self, fuzzy: bool):
+        self.fuzzy_match = fuzzy
+
+    def __repr__(self) -> str:
+        return f"(start_original={self.start_original}, start_new={self.start_new}, match_count={self.match_count()}, replace_count={self.replace_count()})"
+
+
+def extract_hunks(patch: list[str]) -> list[Hunk]:
     # Go through the unified diff lines and fix the hunk headers
     # For each hunk header line starting with @@, count the number of added, removed, and unchanged lines
     # The hunk header format is @@ -start,count +start,count @@
@@ -23,7 +145,7 @@ def fix_patch(patch: list[str]) -> None:
     for i, line in enumerate(patch):
         if line.startswith('@@') or line.startswith('+++') or line.startswith('---'):
             if current_hunk_start is not None:
-                h = range(current_hunk_start, i)
+                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i])
                 hunks.append(h)
             current_hunk_start = None
 
@@ -31,159 +153,77 @@ def fix_patch(patch: list[str]) -> None:
             current_hunk_start = i
 
     if current_hunk_start is not None:
-        hunks.append(range(current_hunk_start, len(patch)))
+        hunks.append(Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:]))
 
-    print(f"Identified {len(hunks)} hunks in the patch.")
+    return hunks
 
-    # Process each hunk to fix the header
-    for hunk in hunks:
-        header_line = patch[hunk.start]
-        # print(f"Processing hunk header: {header_line.strip()}")
-        
-        # Count lines
-        removed = 0
-        added = 0
-        unmodified = 0
-        for line in patch[hunk.start+1:hunk.stop]:
-            if line.startswith('-'):
-                removed += 1
-            elif line.startswith('+'):
-                added += 1
-            else:
-                unmodified += 1
+def patch_code(code_lines: list[str], patch_lines: list[str]):
+    hunk_list = extract_hunks(patch_lines)
+    print(f"Extracted {len(hunk_list)} hunks:")
+    # identify all hunks to apply
+    application_list = []
+    for hunk in hunk_list:
+        print("Hunk", hunk)
+        hunk_start = hunk.match_code(code_lines, 0)
+        if hunk_start is None:
+            print("[WARNING] Can't apply hunk, retrying with fuzzy matching")
+            hunk.set_fuzzy_match(True)
+            hunk_start = hunk.match_code(code_lines, 0)
 
-        # Extract original header info
-        match = re.match(UNIFIED_DIFF_HUNK_HEADER_REGEX, header_line)
-        if match:
-            old_start = int(match.group(1))
-            new_start = int(match.group(3))
-            
-            # Create fixed header
-            fixed_header = f"@@ -{old_start},{unmodified+removed} +{new_start},{unmodified+added} @@\n"
-            if fixed_header != header_line:
-                print(f"Fixed hunk header: {fixed_header.strip()}")
-                patch[hunk.start] = fixed_header  # Update the original patch line
+        if hunk_start is None:
+            print("[ERROR] Still can't apply hunk", hunk)
         else:
-            # If the header line doesn't match, just keep it as is
-            print(f"Warning: Hunk header did not match expected format: {header_line.strip()}")
+            print("[OK] Applying hunk at", hunk_start)
+            application_list.append((hunk_start, hunk))
+
+    # Sort application_list by start
+    application_list.sort(key=lambda x: x[0])
+
+    source_offset = 0
+    for hunk_start, hunk in application_list:
+        # print(f"Replacing lines {start_index} to {start_index + hunk.source_length} with {len(new_lines)} new lines.")
+        start = hunk_start + source_offset
+        code_lines[start:start + hunk.match_count()] = hunk.replace
+        source_offset += hunk.replace_count() - hunk.match_count()
     
-
-def check_hunk_start(code_lines: list[str], hunk: unidiff.Hunk, start_line: int) -> bool:
-    # Check if the hunk can be applied starting at start_line in code_lines
-    hunk_line_index = 0
-    code_line_index = start_line - 1  # Convert to 0-based index
-
-    while hunk_line_index < len(hunk):
-        hunk_line = hunk[hunk_line_index]
-        if hunk_line.is_context:
-            if code_line_index >= len(code_lines) or code_lines[code_line_index] != hunk_line.value:
-                return False
-            code_line_index += 1
-        elif hunk_line.is_removed:
-            if code_line_index >= len(code_lines) or code_lines[code_line_index] != hunk_line.value:
-                return False
-            code_line_index += 1
-        # For added lines, we don't check against code_lines
-        hunk_line_index += 1
-    return True
-
-def apply_hunk(code_lines: list[str], hunk: unidiff.Hunk, adjust_start: int) -> list[str]:
-    # Apply the hunk to the code lines
-    # Check that the hunk starts at the correct line by matching first context lines and removed lines
-    # If the hunk does not start with the expected lines, try to find the correct starting position
-    # code_lines are modified in place
-    # the difference between added and removed lines is returned to be used as adjust_start for next hunk
-
-    start_index = hunk.source_start # start_index is 1-based
-    start_index += adjust_start
-    
-    hunk_match = check_hunk_start(code_lines, hunk, start_index)
-    adjustment = 0
-    if not hunk_match:
-        # Create a list of possible offsets a 1,-1,2,-2,...5,-5, up to max_offset
-        max_offset = 400
-        offsets = []
-        for i in range(1, max_offset + 1):
-            offsets.append(i)
-            offsets.append(-i)
-
-        # Find the correct starting position
-        for offset in offsets:
-            test_start = start_index + offset
-            if test_start < 1:
-                continue
-            hunk_match = check_hunk_start(code_lines, hunk, test_start)
-            if hunk_match:
-                print(f"Adjusted hunk start from line {start_index} to {test_start} (diff {test_start - start_index}, adjust_start {adjust_start})")
-                adjustment = test_start - start_index
-                start_index = test_start
-                break
-        if not hunk_match:
-            print(f"Could not find matching start for hunk at line {start_index}. Skipping hunk.")
-            return 0  # No changes made
-
-    # Now apply the hunk
-    # # Build the new lines from the hunk
-    new_lines = [line.value for line in hunk if not line.is_removed]
-    # Replace start_index to start_index + removed_lines with new_lines
-    # print(f"Replacing lines {start_index} to {start_index + hunk.source_length} with {len(new_lines)} new lines.")
-    code_lines[start_index-1:start_index + hunk.source_length-1] = new_lines
-
-    added_lines = sum(1 for line in hunk if line.is_added)
-    removed_lines = sum(1 for line in hunk if line.is_removed)
-    # Adjust next line offset by difference of lines + hunk adjustment made
-    return added_lines - removed_lines + adjustment
-
-def patch_code(code: list[str], patch_lines: list[str]) -> None:
-    patch_set = unidiff.PatchSet(patch_lines)
-    adjust_start = 0
-    for patched_file in patch_set:
-        print(f"Patching file: {patched_file.path}")
-        for hunk in patched_file:
-            # print(f"Hunk from line {hunk.source_start} to {hunk.source_start + hunk.source_length} in original, "
-            #     f"line {hunk.target_start} to {hunk.target_start + hunk.target_length} in patched.")
-            adjust_start += apply_hunk(code, hunk, adjust_start)
-
 if __name__ == "__main__":
     # original_file_name = "test_sets/patch/nqueens_6702_v1.py"
     # patch_file_name = "test_sets/patch/nqueens_6702_v2.py"
     # original_file_name = "test_sets/patch/interp_5165_v1.py"
     # patch_file_name = "test_sets/patch/interp_5165_v2.patch"
-    original_file_name = "test_sets/patch/c_interp_8564_v1.py"
-    patch_file_name = "test_sets/patch/c_interp_8564_v2.patch"
 
-    with open(original_file_name, 'r') as original_file:
-        original_content = original_file.read()
+    for n in range(1,5):
+        original_file_name = f"test_sets/patch-v2/c_interp_8560_v{n}.py"
+        patch_file_name = f"test_sets/patch-v2/c_interp_8560_v{n+1}.patch"
 
-    with open(patch_file_name, 'r') as patch_file:
-        patch_content = patch_file.read()
+        print(f"--- Testing patching {original_file_name} with {patch_file_name} ---")
+        with open(original_file_name, 'r') as original_file:
+            original_content = original_file.read()
 
-    code_lines = original_content.splitlines()
-    patch_lines = patch_content.splitlines()
+        with open(patch_file_name, 'r') as patch_file:
+            patch_content = patch_file.read()
 
-    fix_patch(patch_lines)
-    # patch_set = unidiff.PatchSet(patch_lines)
+        code_lines = original_content.splitlines()
+        patch_lines = patch_content.splitlines()
 
-    # adjust_start = 0
-    # for patched_file in patch_set:
-    #     print(f"Patching file: {patched_file.path}")
-    #     for hunk in patched_file:
-    #         print(f"Hunk from line {hunk.source_start} to {hunk.source_start + hunk.source_length} in original, "
-    #             f"line {hunk.target_start} to {hunk.target_start + hunk.target_length} in patched.")
-    #         adjust_start += apply_hunk(code_lines, hunk, adjust_start)
-    #         # save intermediate result after each hunk
-    #         with open(f"intermediate_patched_code{hunk.target_start}.py", 'w') as intermediate_file:
-    #             intermediate_file.write('\n'.join(code_lines))
-    try:
+        # hunk_list = extract_hunks(patch_lines)
+        # print(f"Extracted {len(hunk_list)} hunks:")
+        # for hunk in hunk_list:
+        #     print(hunk)
+        #     print("Matches from: ", hunk.match_code(code_lines, 0))
         patch_code(code_lines, patch_lines)
-    except unidiff.errors.UnidiffParseError as e:
-        print(f"Failed to parse patch: {e}")
-        exit(1)
-    except Exception as e:
-        print(f"Error occurred while patching code: {e}")
-        exit(1)
+        # save the file to 
+        with open(f"solutions/patched_file_v{n+1}.py", "w") as f:
+            f.write("\n".join(code_lines))
+        print("-" * 40)
+    
+    # try:
+    #     patch_code(code_lines, patch_lines)
+    # except Exception as e:
+    #     print(f"Error occurred while patching code: {e}")
+    #     exit(1)
 
-    patched_code = '\n'.join(code_lines)
-    print("----- Patched Code -----")
+    # patched_code = '\n'.join(code_lines)
+    # print("----- Patched Code -----")
     # print(patched_code)
 
