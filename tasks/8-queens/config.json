@@ -1,0 +1,7 @@
+{
+  "coder_model": "gemini-2.5-flash",
+  "reviewer_model": "gemini-2.5-flash", 
+  "utility_model": "gemini-2.5-flash-lite",
+  "max_rounds": 25,
+  "basename": "8queens"
+}
