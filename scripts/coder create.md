@@ -23,8 +23,8 @@ You must provide a response that has a strict, 3 part format:
 - The reasoning text is mandatory.
 - The code block is mandatory.
 - The program output block is provided if a program was executed. If there were multiple program execution, only the last result is provided.
-- Use python code block for the code (~~~python). Add blank lines before and after the python code.
-- Use shell code block for the program output (~~~shell). Add blank lines before and after the program output.
+- Use python code block for the code (~~~python), start with empty line followed by "~~~python" and end with "~~~".
+- Use shell code block for the program output, start with empty line followed by "~~~shell" and end with "~~~".
 - **CRITICAL: Use TRIPLE TILDES (~) not backticks (`) for output python and shell code blocks**
 - **CRITICAL: DO NOT use TRIPLE TILDES inside the code**
 

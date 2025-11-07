@@ -15,7 +15,7 @@ import unidiff
 import time
 from pathlib import Path
 from google import genai
-from patch import patch_code, fix_patch, is_unified_diff
+from patch import patch_code, is_unified_diff
 from md_parser import find_code_blocks
 
 # Initialize Gemini LLM
@@ -195,21 +195,7 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
             with open(f"solutions/{filename}_debug_response_text_v{i+1}.json", "w") as f:
                 f.write(code_response["text"])
 
-            print("running reformatter...")
-            reformat_script = load_file("scripts/reformatter.md")
-            reformat_prompt = reformat_script.format_map({
-                "output": code_response["text"],
-            })
-            
-            reformatter_response = llm_query(reformat_prompt, config=llm_config_reformatter, model=nonthinking_llm_model)
-            print_usage_info(reformatter_response["usage"], reformatter_response["response_time"])
-
-            with open(f"solutions/{filename}_debug_reformatter_v{i+1}.json", "w") as f:
-                f.write(reformatter_response["full"].model_dump_json(indent=2))
-            with open(f"solutions/{filename}_debug_reformatter_text_v{i+1}.md", "w") as f:
-                f.write(reformatter_response["text"])
-
-            text = reformatter_response["text"]
+            text = code_response["text"]
             code_blocks = find_code_blocks(text, delimiter="~~~", language="python")
             diff_blocks = find_code_blocks(text, delimiter="~~~", language="diff")
             out_blocks = find_code_blocks(text, delimiter="~~~", language="shell")
@@ -236,7 +222,6 @@ def run_code_agent(use_case: str, goals: str, max_iterations: int = 5) -> str:
                 if previous_code is None:
                     raise ValueError("No previous code to apply patch to.")
                 prev_code_lines = previous_code.splitlines()
-                fix_patch(patch_lines)
                 print(f"💾 Saving patch to file {patch_filename}")
                 save_to_file(patch_filename, "\n".join(patch_lines))
 

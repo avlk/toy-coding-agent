@@ -113,7 +113,9 @@ class Hunk:
 
             if code_line != patch_line:
                 if i > 3:
-                    print(f"Matched {i}/{self.match_count()} lines starting from {start_line+1}, broke at [{code_index+1}]: {self.match[i]}")
+                    print(f"Matched {i}/{self.match_count()} lines starting from {start_line+1}, broke at line {code_index+1}")
+                    print(f" src: {code_line}$")
+                    print(f"diff: {patch_line}$")
                 return False
         return True
 

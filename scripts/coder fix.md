@@ -31,9 +31,9 @@ You must provide a response that has a strict, 3 part format:
 - The reasoning text is mandatory.
 - The diff block is mandatory.
 - The program output block is provided if a program was executed. If there were multiple program execution, only the last result is provided.
-- Use diff code block for the diff (~~~diff). Add blank lines before and after the diff.
-- Use shell code block for the program output (~~~shell). Add blank lines before and after the program output.
-- **CRITICAL: Use TRIPLE TILDES (~) not backticks (`) for output python and shell code blocks**
+- Use diff code block for the diff, start with empty line followed by "~~~diff" and end with "~~~".
+- Use shell code block for the program output, start with empty line followed by "~~~shell" and end with "~~~".
+- **CRITICAL: Use TRIPLE TILDES (~) not backticks (`) for output diff and shell code blocks**
 - **CRITICAL: DO NOT use TRIPLE TILDES inside the code**
 
 ## Example format
