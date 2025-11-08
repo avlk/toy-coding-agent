@@ -37,16 +37,34 @@ llm_config_coder = genai.types.GenerateContentConfig(
     tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)],
 )
 
-llm_config_reformatter = genai.types.GenerateContentConfig(
-    temperature=0,
-)
-
 llm_config_goals_check = genai.types.GenerateContentConfig(
     temperature=0.3,
     responseMimeType="text/x.enum",
     responseSchema={
         "type": "string",
         "enum": ["Yes", "No"],
+    },
+)
+
+llm_config_refine_task = genai.types.GenerateContentConfig(
+    temperature=0.1,
+    responseMimeType="application/json",
+    responseSchema={
+        "type": "object",
+        "properties": {
+            "refined_use_case": {
+                "type": "string",
+                "description": "The refined use case text"
+            },
+            "refined_goals": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "List of refined goals as separate strings"
+            }
+        },
+        "required": ["refined_use_case", "refined_goals"]
     },
 )
 
@@ -215,6 +233,27 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
     filename = create_filename_from_basename(task_config["basename"])
     print(f"🔁 Base name is {filename} for this run")
     
+    # Refine the use case and goals before starting
+    print("\n🔍 Refining use case and goals before starting...")
+    refine_prompt = load_file("scripts/refine task.md")
+    refine_response = llm_query(refine_prompt.format_map({
+        "use_case": use_case,
+        "goals": goals
+    }), config=llm_config_refine_task, model=reviewer_model)
+
+
+    # save the refined response for debugging
+    refine_text = refine_response["text"]
+    refine_json = json.loads(refine_text)
+    with open(f"solutions/{filename}_refined_use_text.md", "w") as f:
+        f.write(refine_text)
+    with open(f"solutions/{filename}_refined_use_case.md", "w") as f:
+        f.write(refine_json["refined_use_case"])
+    with open(f"solutions/{filename}_refined_goals.md", "w") as f:
+        f.write("\n".join(refine_json["refined_goals"]))
+    use_case = refine_json["refined_use_case"]
+    goals = refine_json["refined_goals"]
+
     previous_code = None
     feedback = None
     for i in range(max_iterations):
