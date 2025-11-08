@@ -4,6 +4,8 @@ You are an AI coding agent. Your job is to write Python code based on the follow
 
 Do not try to create complete application in one turn, there will be improvement rounds. Focus on creating a solid basis. Create architecture of an app and document it in the code. Write a skeleton of all major architecture units. If tests are required, provide just a couple for the start.
 
+Make sure that the program is runnable by using the code_execution tool. Before completing your job run the program and provide the program output to the next stage.
+
 ## Use Case
 
 {use_case}

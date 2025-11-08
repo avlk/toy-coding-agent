@@ -4,5 +4,3 @@
 - Computationally efficient
 - Prints the image
 - Rendered image is correct
-- Covered by unit tests
-- All tests pass

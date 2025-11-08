@@ -4,6 +4,9 @@ You are an AI coding agent. Your job is to refine Python code for the following 
 
 You are provided with the previously generated code and a feedback on it. You do not need to fix everything in one turn, focus on items of the TODO list provided in the feedback section.
 
+Make sure that the program is runnable by using the code_execution tool.
+Before completing your job run the program and provide the program output to the next stage.
+
 # Use Case
 
 {use_case}
