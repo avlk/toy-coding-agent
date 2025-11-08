@@ -3,5 +3,6 @@
   "reviewer_model": "gemini-2.5-flash", 
   "utility_model": "gemini-2.5-flash-lite",
   "max_rounds": 25,
-  "basename": "interp"
+  "basename": "interp",
+  "sandbox_method": "auto"
 }

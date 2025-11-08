@@ -13,10 +13,13 @@ import sys
 import json
 import unidiff
 import time
+import subprocess
+import tempfile
 from pathlib import Path
 from google import genai
 from patch import patch_code, is_unified_diff
 from md_parser import find_code_blocks
+from sandbox_execution import execute_sandboxed
 
 # Initialize Gemini LLM
 api_key = os.getenv("GEMINI_API_KEY")
@@ -34,7 +37,8 @@ llm_config = genai.types.GenerateContentConfig(
 
 llm_config_coder = genai.types.GenerateContentConfig(
     temperature=0.3,
-    tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)],
+    # Code execution disabled - test locally instead
+    # tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)],
 )
 
 llm_config_goals_check = genai.types.GenerateContentConfig(
@@ -74,7 +78,8 @@ DEFAULT_TASK_CONFIG = {
     "reviewer_model": "gemini-2.5-pro", 
     "utility_model": "gemini-2.5-flash-lite",
     "max_rounds": 25,
-    "basename": "code"
+    "basename": "code",
+    "sandbox_method": "auto"  # Options: auto, firejail, docker, bubblewrap, subprocess
 }
 
 def llm_query(query, config=llm_config, model=llm_model):
@@ -215,12 +220,27 @@ def save_to_file(filename: str, code: str) -> str:
     print(f"✅ Saved to: {filepath}")
     return str(filepath)
 
+def execute_code_locally(code: str, timeout: int = 30, sandbox_method: str = 'auto') -> dict:
+    """
+    Execute Python code locally in a sandbox and capture output.
+    Returns dict with 'success', 'stdout', 'stderr', 'exit_code'
+    
+    Delegates to sandbox_execution module which supports:
+    - firejail (lightweight Linux sandboxing)
+    - docker (full container isolation)
+    - bubblewrap (Linux namespace sandboxing)
+    - subprocess (basic execution with timeout)
+    - auto (tries methods in order until one works)
+    """
+    return execute_sandboxed(code, timeout, method=sandbox_method)
+
 # --- Main Agent Function ---
 def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
     coder_model = task_config["coder_model"]
     reviewer_model = task_config["reviewer_model"]
     utility_model = task_config["utility_model"]
     max_iterations = task_config["max_rounds"]
+    sandbox_method = task_config.get("sandbox_method", "auto")
     
     print("\n🎯 Use Case:")
     print(use_case)
@@ -319,6 +339,35 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
             code_output_filename = f"{filename}_v{i+1}_output.txt"
             print(f"💾 Saving intermediate code output to file {code_output_filename}")
             save_to_file(code_output_filename, code_output)
+
+        # Execute code locally to get actual output
+        print(f"🖥️  Executing code locally (sandbox: {sandbox_method})...")
+        local_exec_result = execute_code_locally(code, sandbox_method=sandbox_method)
+        
+        if local_exec_result['success']:
+            actual_method = local_exec_result.get('method', sandbox_method)
+            print(f"✅ Local execution successful (used: {actual_method})")
+            local_output = local_exec_result['stdout']
+            # Save local execution output
+            local_output_filename = f"{filename}_v{i+1}_local_output.txt"
+            save_to_file(local_output_filename, local_output)
+            
+            # Use local output for review if it differs from cloud output
+            if code_output and local_output != code_output:
+                print(f"⚠️  Local output differs from cloud execution")
+                print(f"   Cloud output length: {len(code_output)} chars")
+                print(f"   Local output length: {len(local_output)} chars")
+                # Use local output for review since that's what will actually run
+                code_output = local_output
+            elif not code_output:
+                # If no cloud output, use local output
+                code_output = local_output
+        else:
+            print(f"❌ Local execution failed: {local_exec_result['stderr']}")
+            # Save error output for debugging
+            error_filename = f"{filename}_v{i+1}_local_error.txt"
+            save_to_file(error_filename, f"Exit code: {local_exec_result['exit_code']}\n\nStderr:\n{local_exec_result['stderr']}")
+
 
         print("\n📤 Submitting code for feedback review...")
         feedback = get_code_feedback(use_case, code, goals, code_output, reviewer_model)
