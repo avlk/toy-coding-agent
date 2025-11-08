@@ -252,7 +252,7 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
     with open(f"solutions/{filename}_refined_goals.md", "w") as f:
         f.write("\n".join(refine_json["refined_goals"]))
     use_case = refine_json["refined_use_case"]
-    goals = refine_json["refined_goals"]
+    goals = "\n- " + "\n- ".join(refine_json["refined_goals"])
 
     previous_code = None
     feedback = None
