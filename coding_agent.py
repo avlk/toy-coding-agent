@@ -105,9 +105,61 @@ def print_usage_info(metadata, time):
     print(f"Time taken for LLM call: {time:.1f} seconds")
 
 # --- Utility Functions ---
+
+# Helper functions for string/list conversions
+def to_lines(text) -> list:
+    """
+    Convert text to list of lines.
+    
+    Args:
+        text: Either a string (will be split on newlines) or already a list
+    
+    Returns:
+        List of strings (lines)
+    """
+    if isinstance(text, list):
+        return text
+    return text.splitlines()
+
+def to_string(lines) -> str:
+    """
+    Convert lines to string.
+    
+    Args:
+        lines: Either a list of strings (will be joined with newlines) or already a string
+    
+    Returns:
+        String with lines joined by newlines
+    """
+    if isinstance(lines, str):
+        return lines
+    return '\n'.join(lines)
+
+def format_goals(goals) -> str:
+    """
+    Format goals list for display/LLM prompts.
+    
+    Args:
+        goals: Either a list of goal strings or already formatted string
+    
+    Returns:
+        Formatted string with bullet points (e.g., "\n- goal1\n- goal2")
+    """
+    if isinstance(goals, str):
+        # Already formatted
+        return goals
+    # Format list as bulleted items
+    return "\n- " + "\n- ".join(goals)
+
 def load_file(filepath: str) -> str:
+    """Load file contents as string."""
     with open(filepath, "r") as f:
         return f.read()
+
+def load_file_lines(filepath: str) -> list:
+    """Load file contents as list of lines."""
+    with open(filepath, "r") as f:
+        return f.read().splitlines()
 
 def load_task_config(config_name: str) -> dict:
     """Load configuration from tasks/{config_name}/config.json"""
@@ -134,7 +186,19 @@ def load_task_config(config_name: str) -> dict:
         print("🔄 Using default configuration")
         return DEFAULT_TASK_CONFIG.copy()
 
-def generate_prompt(use_case: str, goals: str, previous_code: str = None, feedback: str = None) -> str:
+def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: str = None) -> str:
+    """
+    Generate prompt for code generation.
+    
+    Args:
+        use_case: Use case description (string)
+        goals: Goals description (string)
+        previous_code: Previous code (can be string or list, will be converted to string)
+        feedback: Feedback text (string)
+    
+    Returns:
+        Formatted prompt string
+    """
     print("📝 Constructing prompt for code generation...")
 
     if previous_code:
@@ -144,10 +208,14 @@ def generate_prompt(use_case: str, goals: str, previous_code: str = None, feedba
         script_path = "scripts/coder create.md"
 
     script = load_file(script_path)
+    
+    # Convert previous_code to string if it's a list
+    previous_code_str = to_string(previous_code) if previous_code else None
+    
     base_prompt = script.format_map({
         "use_case": use_case,
         "goals": goals,
-        "previous_code": previous_code,
+        "previous_code": previous_code_str,
         "feedback": feedback
     })
 
@@ -181,39 +249,68 @@ def goals_met(feedback_text: str, goals: str, utility_model: str = default_llm_m
     print(f"🎯 Goals met evaluation: {response}")
     return response == "yes"
 
-def clean_code_block(code) -> str:
-    if not isinstance(code, list):
-        lines = code.splitlines()
-    else:
-        lines = code
+def clean_code_block(code) -> list:
+    """
+    Remove code block markers (```) from beginning and end.
+    
+    Args:
+        code: Either a string or list of lines
+    
+    Returns:
+        List of lines with markers removed
+    """
+    lines = to_lines(code)
     if lines and lines[0].strip().startswith("```"):
         lines = lines[1:]
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
-    return "\n".join(lines)
+    return lines
 
-def normalize_output(text: str) -> str:
-    lines = text.splitlines()
+def normalize_output(text) -> list:
+    """
+    Normalize output by removing trailing spaces and empty lines at start/end.
+    
+    Args:
+        text: Either a string or list of lines
+    
+    Returns:
+        List of normalized lines
+    """
+    lines = to_lines(text)
     # remove trailing spaces
-    for i in range(len(lines)):
-        lines[i] = lines[i].rstrip()
+    lines = [line.rstrip() for line in lines]
     # remove starting empty lines
     while lines and lines[0] == "":
         lines = lines[1:]
     # remove ending empty lines
     while lines and lines[-1] == "":
         lines = lines[:-1]
-    return "\n".join(lines)
+    return lines
 
-def add_comment_header(code: str, use_case: str, task_config: dict) -> str:
+def add_comment_header(code, use_case, task_config: dict) -> list:
+    """
+    Add comment header to code.
+    
+    Args:
+        code: Either a string or list of lines
+        use_case: Either a string or list of lines describing the use case
+        task_config: Dictionary with task configuration
+    
+    Returns:
+        List of lines with comment header prepended
+    """
     comment = []
     comment.append(f"# This Python program implements the following use case:")
-    for line in use_case.strip().splitlines():
+    use_case_lines = to_lines(use_case)
+    for line in use_case_lines:
         comment.append(f"# {line.strip()}")
     comment.append(f"# Generated by AI Code Generation Agent")
     comment.append(f"# Models used: coder={task_config['coder_model']}, reviewer={task_config['reviewer_model']}, utility={task_config['utility_model']}")
-    comment.append(f"# Max rounds: {task_config['max_rounds']}\n")
-    return "\n".join(comment) + "\n" + code
+    comment.append(f"# Max rounds: {task_config['max_rounds']}")
+    comment.append("")  # Empty line separator
+    
+    code_lines = to_lines(code)
+    return comment + code_lines
 
 def to_snake_case(text: str) -> str:
     text = re.sub(r"[^a-zA-Z0-9 ]", "", text)
@@ -303,13 +400,13 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
     save_to_file(f"{filename}_refined_use_case.md", refine_json["refined_use_case"])
     save_to_file(f"{filename}_refined_goals.md", refine_json["refined_goals"])
     use_case = refine_json["refined_use_case"]
-    goals = "\n- " + "\n- ".join(refine_json["refined_goals"])
+    goals = refine_json["refined_goals"]  # Keep as list
 
     previous_code = None
     feedback = None
     for i in range(max_iterations):
         print(f"\n=== 🔁 Iteration {i + 1} of {max_iterations} ===")
-        prompt = generate_prompt(use_case, goals, previous_code, feedback)
+        prompt = generate_prompt(use_case, format_goals(goals), previous_code, feedback)
         
         print("🚧 Generating code...")
         code_response = llm_query(prompt, config=llm_config_coder, model=coder_model)
@@ -333,25 +430,24 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
             if out_blocks:
                 save_to_file(f"{filename}_coder_out_v{i+1}.txt", out_blocks[0])
 
-            code_output = out_blocks[0] if len(out_blocks) > 0 else ""
-            if isinstance(code_output, list):
-                code_output = "\n".join(code_output)
+            # Keep code_output as list for internal processing
+            code_output = to_lines(out_blocks[0]) if len(out_blocks) > 0 else []
 
             if diff_blocks:
-                patch_lines = clean_code_block(diff_blocks[0]).splitlines()
+                patch_lines = clean_code_block(diff_blocks[0])
                 print("🛠️ Detected unified diff patch. Applying patch to previous code.")
                 patch_filename = f"{filename}_v{i+1}.patch"
 
                 if previous_code is None:
                     raise ValueError("No previous code to apply patch to.")
-                prev_code_lines = previous_code.splitlines()
+                prev_code_lines = to_lines(previous_code)
                 patch_code(prev_code_lines, patch_lines)
-                code = '\n'.join(prev_code_lines)
+                code = prev_code_lines  # Now a list
             else:
                 if code_blocks:
-                    code = clean_code_block(code_blocks[0])
+                    code = clean_code_block(code_blocks[0])  # Now a list
                 else:
-                    code = ""
+                    code = []
         except Exception as e:
             print(f"❌ Error processing LLM output: {e}")
             print("Restarting iteration...")
@@ -369,7 +465,7 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
         # Execute code locally to get actual output
         commandline_args = task_config.get("commandline_args", "")
         print(f"🖥️  Executing code locally (sandbox: {sandbox_method}, args: {commandline_args if commandline_args else 'none'})...")
-        local_exec_result = execute_code_locally(code, sandbox_method=sandbox_method, args=commandline_args)
+        local_exec_result = execute_code_locally(to_string(code), sandbox_method=sandbox_method, args=commandline_args)
         local_exec_success = local_exec_result['success']
 
         actual_method = local_exec_result.get('method', sandbox_method)
@@ -389,20 +485,24 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
             save_to_file(error_filename, f"Exit code: {local_exec_result['exit_code']}\n\nStderr:\n{local_exec_result['stderr']}")
 
         # Use local output for review if it differs from cloud output
-        if code_output and normalize_output(local_output) != normalize_output(code_output):
+        # Normalize outputs to lists for comparison
+        local_output_lines = normalize_output(local_output)
+        code_output_lines = normalize_output(code_output) if code_output else []
+        
+        if code_output and local_output_lines != code_output_lines:
             print(f"⚠️  Local output differs from cloud execution")
-            print(f"   Cloud output length: {len(code_output)} chars")
+            print(f"   Cloud output length: {len(to_string(code_output))} chars")
             print(f"   Local output length: {len(local_output)} chars")
             # Use local output for review since that's what will actually run
-            code_output = local_output
+            code_output = to_lines(local_output)
         elif not code_output:
             # If no cloud output, use local output
-            code_output = local_output
+            code_output = to_lines(local_output)
 
 
 
         print("\n📤 Submitting code for feedback review...")
-        feedback = get_code_feedback(use_case, code, goals, code_output, reviewer_model)
+        feedback = get_code_feedback(use_case, to_string(code), format_goals(goals), to_string(code_output), reviewer_model)
         feedback_text = feedback.strip()
         # print("\n📥 Feedback Received:\n" + "-" * 50 + f"\n{feedback_text}\n" + "-" * 50)
 
@@ -410,7 +510,7 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
         print(f"💾 Saving review to file {review_filename}")
         save_to_file(review_filename, feedback_text)
 
-        if goals_met(feedback_text, goals, utility_model):
+        if goals_met(feedback_text, format_goals(goals), utility_model):
             print("✅ LLM confirms goals are met. Stopping iteration.")
             break
 
