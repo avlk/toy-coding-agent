@@ -14,6 +14,7 @@ import json
 import time
 import subprocess
 import tempfile
+import argparse
 from pathlib import Path
 from google import genai
 from patch import patch_code, is_unified_diff
@@ -220,33 +221,13 @@ def add_comment_header(code, use_case, task_config: dict) -> list:
     code_lines = to_lines(code)
     return comment + code_lines
 
-def execute_code_locally(code: str, timeout: int = 30, sandbox_method: str = 'auto', args: str = '') -> dict:
-    """
-    Execute Python code locally in a sandbox and capture output.
-    Returns dict with 'success', 'stdout', 'stderr', 'exit_code'
-    
-    Delegates to sandbox_execution module which supports:
-    - firejail (lightweight Linux sandboxing)
-    - docker (full container isolation)
-    - bubblewrap (Linux namespace sandboxing)
-    - subprocess (basic execution with timeout)
-    - auto (tries methods in order until one works)
-    
-    Args:
-        code: Python code to execute
-        timeout: Execution timeout in seconds
-        sandbox_method: Sandbox method to use
-        args: Command-line arguments to pass to the Python script
-    """
-    return execute_sandboxed(code, timeout, method=sandbox_method, args=args)
-
 def create_filename(basename: str) -> str:
     # Create a filename by appending a random suffix to the basename
     random_suffix = str(random.randint(1000, 9999))
     return f"{basename}_{random_suffix}"
 
 # --- Main Agent Function ---
-def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
+def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: bool = True, local_execution: bool = True) -> str:
     coder_model = task_config["coder_model"]
     reviewer_model = task_config["reviewer_model"]
     utility_model = task_config["utility_model"]
@@ -264,23 +245,28 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
     filename = create_filename(task_config["basename"])
     print(f"🔁 Base name is {filename} for this run")
     
-    # Refine the use case and goals before starting
-    print("\n🔍 Refining use case and goals before starting...")
-    refine_prompt = load_file("scripts/refine task.md")
-    refine_response = llm_query(refine_prompt.format_map({
-        "use_case": use_case,
-        "goals": goals
-    }), config=llm_config_refine_task, model=reviewer_model)
+    # Refine the use case and goals before starting (if enabled)
+    if refine_goals:
+        print("\n🔍 Refining use case and goals before starting...")
+        refine_prompt = load_file("scripts/refine task.md")
+        refine_response = llm_query(refine_prompt.format_map({
+            "use_case": use_case,
+            "goals": goals
+        }), config=llm_config_refine_task, model=reviewer_model)
 
-
-    # save the refined response for debugging
-    refine_text = refine_response["text"]
-    refine_json = json.loads(refine_text)
-    save_to_file(f"{filename}_refined_use_text.md", refine_text)
-    save_to_file(f"{filename}_refined_use_case.md", refine_json["refined_use_case"])
-    save_to_file(f"{filename}_refined_goals.md", refine_json["refined_goals"])
-    use_case = refine_json["refined_use_case"]
-    goals = refine_json["refined_goals"]  # Keep as list
+        # save the refined response for debugging
+        refine_text = refine_response["text"]
+        refine_json = json.loads(refine_text)
+        save_to_file(f"{filename}_refined_use_text.md", refine_text)
+        save_to_file(f"{filename}_refined_use_case.md", refine_json["refined_use_case"])
+        save_to_file(f"{filename}_refined_goals.md", refine_json["refined_goals"])
+        use_case = refine_json["refined_use_case"]
+        goals = refine_json["refined_goals"]  # Keep as list
+    else:
+        print("\n⏭️  Skipping goals refinement (using original goals)")
+        # Ensure goals is a list if it's a string
+        if isinstance(goals, str):
+            goals = to_lines(goals)
 
     previous_code = None
     feedback = None
@@ -342,44 +328,45 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
             print(f"💾 Saving intermediate code output to file {code_output_filename}")
             save_to_file(code_output_filename, code_output)
 
-        # Execute code locally to get actual output
-        commandline_args = task_config.get("commandline_args", "")
-        print(f"🖥️  Executing code locally (sandbox: {sandbox_method}, args: {commandline_args if commandline_args else 'none'})...")
-        local_exec_result = execute_code_locally(to_string(code), sandbox_method=sandbox_method, args=commandline_args)
-        local_exec_success = local_exec_result['success']
+        # Execute code locally to get actual output (if enabled)
+        if local_execution:
+            commandline_args = task_config.get("commandline_args", "")
+            print(f"🖥️  Executing code locally (sandbox: {sandbox_method}, args: {commandline_args if commandline_args else 'none'})...")
+            local_exec_result = execute_sandboxed(to_string(code), method=sandbox_method, args=commandline_args)
+            local_exec_success = local_exec_result['success']
 
-        actual_method = local_exec_result.get('method', sandbox_method)
-        if local_exec_success:
-            print(f"✅ Local execution successful, method: {actual_method}")
+            actual_method = local_exec_result.get('method', sandbox_method)
+            if local_exec_success:
+                print(f"✅ Local execution successful, method: {actual_method}")
+            else:
+                print(f"❌ Local execution returned error: {local_exec_result['stderr']}")
+
+            # Save local execution output
+            local_output = local_exec_result['stdout']
+            local_output_filename = f"{filename}_v{i+1}_local_output.txt"
+            save_to_file(local_output_filename, local_output)
+
+            if not local_exec_success:
+                # Save error output for debugging
+                error_filename = f"{filename}_v{i+1}_local_error.txt"
+                save_to_file(error_filename, f"Exit code: {local_exec_result['exit_code']}\n\nStderr:\n{local_exec_result['stderr']}")
+
+            # Use local output for review if it differs from cloud output
+            # Normalize outputs to lists for comparison
+            local_output_lines = normalize_output(local_output)
+            code_output_lines = normalize_output(code_output) if code_output else []
+            
+            if code_output and local_output_lines != code_output_lines:
+                print(f"⚠️  Local output differs from cloud execution")
+                print(f"   Cloud output length: {len(to_string(code_output))} chars")
+                print(f"   Local output length: {len(local_output)} chars")
+                # Use local output for review since that's what will actually run
+                code_output = to_lines(local_output)
+            elif not code_output:
+                # If no cloud output, use local output
+                code_output = to_lines(local_output)
         else:
-            print(f"❌ Local execution returned error: {local_exec_result['stderr']}")
-
-        # Save local execution output
-        local_output = local_exec_result['stdout']
-        local_output_filename = f"{filename}_v{i+1}_local_output.txt"
-        save_to_file(local_output_filename, local_output)
-
-        if not local_exec_success:
-            # Save error output for debugging
-            error_filename = f"{filename}_v{i+1}_local_error.txt"
-            save_to_file(error_filename, f"Exit code: {local_exec_result['exit_code']}\n\nStderr:\n{local_exec_result['stderr']}")
-
-        # Use local output for review if it differs from cloud output
-        # Normalize outputs to lists for comparison
-        local_output_lines = normalize_output(local_output)
-        code_output_lines = normalize_output(code_output) if code_output else []
-        
-        if code_output and local_output_lines != code_output_lines:
-            print(f"⚠️  Local output differs from cloud execution")
-            print(f"   Cloud output length: {len(to_string(code_output))} chars")
-            print(f"   Local output length: {len(local_output)} chars")
-            # Use local output for review since that's what will actually run
-            code_output = to_lines(local_output)
-        elif not code_output:
-            # If no cloud output, use local output
-            code_output = to_lines(local_output)
-
-
+            print("⏭️  Skipping local execution (using LLM-provided output only)")
 
         print("\n📤 Submitting code for feedback review...")
         feedback = get_code_feedback(use_case, to_string(code), format_goals(goals), to_string(code_output), reviewer_model)
@@ -406,12 +393,21 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
 if __name__ == "__main__":
     print("\n🧠 Welcome to the AI Code Generation Agent")
 
-    # Configuration name is the first command-line argument
-    config_name = sys.argv[1] if len(sys.argv) > 1 else None
-
-    if not config_name:
-        print("Please provide a configuration name as the first argument.")
-        sys.exit(1)
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="AI Code Generation Agent")
+    parser.add_argument("config_name", help="Configuration name (task directory in tasks/)")
+    parser.add_argument("--refine-goals", dest="refine_goals", action="store_true", 
+                        help="Refine use case and goals before starting (default)")
+    parser.add_argument("--no-refine-goals", dest="refine_goals", action="store_false",
+                        help="Skip goals refinement, use original goals as-is")
+    parser.add_argument("--local-execution", dest="local_execution", action="store_true",
+                        help="Execute code locally to verify output (default)")
+    parser.add_argument("--no-local-execution", dest="local_execution", action="store_false",
+                        help="Skip local execution, rely only on LLM-provided output")
+    parser.set_defaults(refine_goals=True, local_execution=True)
+    
+    args = parser.parse_args()
+    config_name = args.config_name
 
     if not os.path.exists(f"tasks/{config_name}/"):
         print(f"Configuration for '{config_name}' not found in 'tasks/{config_name}/'.")
@@ -422,5 +418,5 @@ if __name__ == "__main__":
     
     use_case_input = load_file(f"tasks/{config_name}/hl_spec.md")
     goals_input = load_file(f"tasks/{config_name}/ac.md")
-    run_code_agent(use_case_input, goals_input, task_config)
+    run_code_agent(use_case_input, goals_input, task_config, refine_goals=args.refine_goals, local_execution=args.local_execution)
     
