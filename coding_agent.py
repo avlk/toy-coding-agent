@@ -11,7 +11,6 @@ import random
 import re
 import sys
 import json
-import unidiff
 import time
 import subprocess
 import tempfile
@@ -225,10 +224,27 @@ def create_filename_from_basename(basename: str) -> str:
     random_suffix = str(random.randint(1000, 9999))
     return f"{basename}_{random_suffix}"
 
-def save_to_file(filename: str, code: str) -> str:
+def save_to_file(filename: str, content) -> str:
+    """
+    Save content to a file in the solutions directory.
+    
+    Args:
+        filename: Name of the file to save
+        content: Either a string or a list of strings (will be joined with newlines)
+    
+    Returns:
+        Absolute path to the saved file
+    """
     filepath = Path.cwd() / "solutions" / filename
+    
+    # Convert list to string if needed
+    if isinstance(content, list):
+        text = '\n'.join(content)
+    else:
+        text = content
+    
     with open(filepath, "w") as f:
-        f.write(code)
+        f.write(text)
     print(f"✅ Saved to: {filepath}")
     return str(filepath)
 
@@ -283,12 +299,9 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
     # save the refined response for debugging
     refine_text = refine_response["text"]
     refine_json = json.loads(refine_text)
-    with open(f"solutions/{filename}_refined_use_text.md", "w") as f:
-        f.write(refine_text)
-    with open(f"solutions/{filename}_refined_use_case.md", "w") as f:
-        f.write(refine_json["refined_use_case"])
-    with open(f"solutions/{filename}_refined_goals.md", "w") as f:
-        f.write("\n".join(refine_json["refined_goals"]))
+    save_to_file(f"{filename}_refined_use_text.md", refine_text)
+    save_to_file(f"{filename}_refined_use_case.md", refine_json["refined_use_case"])
+    save_to_file(f"{filename}_refined_goals.md", refine_json["refined_goals"])
     use_case = refine_json["refined_use_case"]
     goals = "\n- " + "\n- ".join(refine_json["refined_goals"])
 
@@ -305,10 +318,8 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
         print("🧾 Processing LLM output...")
         try:
             # Save JSON response for debugging
-            with open(f"solutions/{filename}_coder_raw_v{i+1}.json", "w") as f:
-                f.write(code_response["full"].model_dump_json(indent=2))
-            with open(f"solutions/{filename}_coder_text_v{i+1}.md", "w") as f:
-                f.write(code_response["text"])
+            save_to_file(f"{filename}_coder_raw_v{i+1}.json", code_response["full"].model_dump_json(indent=2))
+            save_to_file(f"{filename}_coder_text_v{i+1}.md", code_response["text"])
 
             text = code_response["text"]
             code_blocks = find_code_blocks(text, delimiter="~~~", language="python")
@@ -316,14 +327,11 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
             out_blocks = find_code_blocks(text, delimiter="~~~", language="shell")
 
             if code_blocks:
-                with open(f"solutions/{filename}_coder_code_v{i+1}.py", "w") as f:
-                    f.write(code_blocks[0])
+                save_to_file(f"{filename}_coder_code_v{i+1}.py", code_blocks[0])
             if diff_blocks:
-                with open(f"solutions/{filename}_coder_diff_v{i+1}.patch", "w") as f:
-                    f.write(diff_blocks[0])
+                save_to_file(f"{filename}_coder_diff_v{i+1}.patch", diff_blocks[0])
             if out_blocks:
-                with open(f"solutions/{filename}_coder_out_v{i+1}.txt", "w") as f:
-                    f.write(out_blocks[0])
+                save_to_file(f"{filename}_coder_out_v{i+1}.txt", out_blocks[0])
 
             code_output = out_blocks[0] if len(out_blocks) > 0 else ""
             if isinstance(code_output, list):
