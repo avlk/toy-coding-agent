@@ -20,6 +20,7 @@ from google import genai
 from patch import patch_code, is_unified_diff
 from md_parser import find_code_blocks
 from sandbox_execution import execute_sandboxed
+from token_tracker import TokenUsageTracker
 from utils import *
 
 # Initialize Gemini LLM
@@ -82,6 +83,9 @@ DEFAULT_TASK_CONFIG = {
     "commandline_args": ""
 }
 
+# Initialize token usage tracker
+token_tracker = TokenUsageTracker()
+
 def llm_query(query, config=llm_config, model=default_llm_model):
     # mark start time
     start_time = time.monotonic()
@@ -93,18 +97,11 @@ def llm_query(query, config=llm_config, model=default_llm_model):
     generation_time = end_time - start_time
     text = response.text
 
-    return {"text": text, "full": response, "usage": response.usage_metadata, "response_time": generation_time}
+    # Print usage info and record statistics
+    token_tracker.print_call_info(response.usage_metadata, generation_time)
+    token_tracker.record(model, response.usage_metadata, generation_time)
 
-def print_usage_info(metadata, time):
-    print("Token Usage Info: total {}, cache {}, candidates {}, prompt {}, thoughts {}, tool_use {}".format(
-        metadata.total_token_count,
-        metadata.cached_content_token_count,
-        metadata.candidates_token_count,
-        metadata.prompt_token_count,
-        metadata.thoughts_token_count,
-        metadata.tool_use_prompt_token_count
-    ))
-    print(f"Time taken for LLM call: {time:.1f} seconds")
+    return {"text": text, "full": response, "usage": response.usage_metadata, "response_time": generation_time}
 
 # --- Agent-Specific Functions ---
 
@@ -276,7 +273,6 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
         
         print("🚧 Generating code...")
         code_response = llm_query(prompt, config=llm_config_coder, model=coder_model)
-        print_usage_info(code_response["usage"], code_response["response_time"])
         
         print("🧾 Processing LLM output...")
         try:
@@ -387,6 +383,10 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
     final_code = add_comment_header(code, use_case, task_config)
     code_filename = f"{filename}.py"
     print(f"💾 Saving final code to file {code_filename}")
+    
+    # Print token usage summary
+    token_tracker.print_summary()
+    
     return save_to_file(code_filename, final_code)
 
 # --- CLI Test Run ---
