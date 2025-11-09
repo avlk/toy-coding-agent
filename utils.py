@@ -72,7 +72,7 @@ def load_file_lines(filepath: str) -> list:
         return f.read().splitlines()
 
 
-def save_to_file(filename: str, content) -> str:
+def save_to_file(filename: str, content, content_name="output") -> str:
     """
     Save content to a file in the solutions directory.
     
@@ -93,7 +93,7 @@ def save_to_file(filename: str, content) -> str:
     
     with open(filepath, "w") as f:
         f.write(text)
-    print(f"✅ Saved to: {filepath}")
+    print(f"✅ Saved {content_name} to: {filepath}")
     return str(filepath)
 
 

@@ -254,9 +254,9 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
         # save the refined response for debugging
         refine_text = refine_response["text"]
         refine_json = json.loads(refine_text)
-        save_to_file(f"{filename}_refined_use_text.md", refine_text)
-        save_to_file(f"{filename}_refined_use_case.md", refine_json["refined_use_case"])
-        save_to_file(f"{filename}_refined_goals.md", refine_json["refined_goals"])
+        save_to_file(f"{filename}_refined_use_text.md", refine_text, content_name="raw LLM text")
+        save_to_file(f"{filename}_refined_use_case.md", refine_json["refined_use_case"], content_name="refined use case")
+        save_to_file(f"{filename}_refined_goals.md", refine_json["refined_goals"], content_name="refined goals")
         use_case = refine_json["refined_use_case"]
         goals = refine_json["refined_goals"]  # Keep as list
     else:
@@ -277,8 +277,8 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
         print("🧾 Processing LLM output...")
         try:
             # Save JSON response for debugging
-            save_to_file(f"{filename}_coder_raw_v{i+1}.json", code_response["full"].model_dump_json(indent=2))
-            save_to_file(f"{filename}_coder_text_v{i+1}.md", code_response["text"])
+            save_to_file(f"{filename}_coder_raw_v{i+1}.json", code_response["full"].model_dump_json(indent=2), content_name="raw LLM JSON response" )
+            save_to_file(f"{filename}_coder_text_v{i+1}.md", code_response["text"], content_name="raw LLM text")
 
             text = code_response["text"]
             code_blocks = find_code_blocks(text, delimiter="~~~", language="python")
@@ -286,11 +286,11 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
             out_blocks = find_code_blocks(text, delimiter="~~~", language="shell")
 
             if code_blocks:
-                save_to_file(f"{filename}_coder_code_v{i+1}.py", code_blocks[0])
+                save_to_file(f"{filename}_coder_code_v{i+1}.py", code_blocks[0], content_name="code block")
             if diff_blocks:
-                save_to_file(f"{filename}_coder_diff_v{i+1}.patch", diff_blocks[0])
+                save_to_file(f"{filename}_coder_diff_v{i+1}.patch", diff_blocks[0], content_name="diff patch")
             if out_blocks:
-                save_to_file(f"{filename}_coder_out_v{i+1}.txt", out_blocks[0])
+                save_to_file(f"{filename}_coder_out_v{i+1}.txt", out_blocks[0], content_name="code output")
 
             # Keep code_output as list for internal processing
             code_output = to_lines(out_blocks[0]) if len(out_blocks) > 0 else []
@@ -316,13 +316,11 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
             continue
 
         code_filename = f"{filename}_v{i+1}.py"
-        print(f"💾 Saving intermediate code to file {code_filename}")
-        save_to_file(code_filename, code)
+        save_to_file(code_filename, code, content_name="intermediate code")
 
         if code_output:
             code_output_filename = f"{filename}_v{i+1}_output.txt"
-            print(f"💾 Saving intermediate code output to file {code_output_filename}")
-            save_to_file(code_output_filename, code_output)
+            save_to_file(code_output_filename, code_output, content_name="intermediate code output")
 
         # Execute code locally to get actual output (if enabled)
         if local_execution:
@@ -340,12 +338,13 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
             # Save local execution output
             local_output = local_exec_result['stdout']
             local_output_filename = f"{filename}_v{i+1}_local_output.txt"
-            save_to_file(local_output_filename, local_output)
+            save_to_file(local_output_filename, local_output, content_name="local execution output")
 
             if not local_exec_success:
                 # Save error output for debugging
                 error_filename = f"{filename}_v{i+1}_local_error.txt"
-                save_to_file(error_filename, f"Exit code: {local_exec_result['exit_code']}\n\nStderr:\n{local_exec_result['stderr']}")
+                error_text = f"Exit code: {local_exec_result['exit_code']}\n\nStderr:\n{local_exec_result['stderr']}"
+                save_to_file(error_filename, error_text, content_name="local execution error")
 
             # Use local output for review if it differs from cloud output
             # Normalize outputs to lists for comparison
@@ -370,8 +369,7 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
         # print("\n📥 Feedback Received:\n" + "-" * 50 + f"\n{feedback_text}\n" + "-" * 50)
 
         review_filename = f"{filename}_review_v{i+1}.txt"
-        print(f"💾 Saving review to file {review_filename}")
-        save_to_file(review_filename, feedback_text)
+        save_to_file(review_filename, feedback_text, content_name="code review")
 
         if goals_met(feedback_text, format_goals(goals), utility_model):
             print("✅ LLM confirms goals are met. Stopping iteration.")
@@ -380,14 +378,12 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
         print("🛠️ Goals not fully met. Preparing for next iteration...")
         previous_code = code
 
-    final_code = add_comment_header(code, use_case, task_config)
-    code_filename = f"{filename}.py"
-    print(f"💾 Saving final code to file {code_filename}")
-    
     # Print token usage summary
     token_tracker.print_summary()
-    
-    return save_to_file(code_filename, final_code)
+
+    final_code = add_comment_header(code, use_case, task_config)
+    code_filename = f"{filename}.py"
+    return save_to_file(code_filename, final_code, content_name="final code")
 
 # --- CLI Test Run ---
 if __name__ == "__main__":
