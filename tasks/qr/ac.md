@@ -1,0 +1,11 @@
+- Code simple to understand
+- Functionally correct
+- Handles comprehensive edge cases
+- Computationally efficient
+- Prints the QR code
+- Rendered QR code is correct
+- QR code can encode text or URL
+- QR code size adjust to the length of input
+- QR code shall be scannable by a smartphone
+- unit tests are present
+- unit tests run with no errors
