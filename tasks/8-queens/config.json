@@ -4,5 +4,6 @@
   "utility_model": "gemini-2.5-flash-lite",
   "max_rounds": 25,
   "basename": "8queens",
-  "sandbox_method": "auto"
+  "sandbox_method": "auto",
+  "commandline_args": ""
 }

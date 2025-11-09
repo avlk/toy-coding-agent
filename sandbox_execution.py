@@ -54,7 +54,7 @@ def _execute_with_cleanup(cmd: list, temp_file: str, timeout: int, method: str) 
         return _make_result(False, '', f'Execution error: {str(e)}', -1, method)
 
 
-def execute_with_firejail(code: str, timeout: int = 30) -> dict:
+def execute_with_firejail(code: str, timeout: int = 30, args: str = '') -> dict:
     """Execute code using firejail for sandboxing."""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(code)
@@ -66,10 +66,14 @@ def execute_with_firejail(code: str, timeout: int = 30) -> dict:
         'python3', temp_file
     ]
     
+    # Add command-line arguments if provided
+    if args:
+        cmd.extend(args.split())
+    
     return _execute_with_cleanup(cmd, temp_file, timeout, 'firejail')
 
 
-def execute_with_docker(code: str, timeout: int = 30, image: str = 'python:3.12-slim') -> dict:
+def execute_with_docker(code: str, timeout: int = 30, image: str = 'python:3.12-slim', args: str = '') -> dict:
     """Execute code in a Docker container."""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(code)
@@ -81,10 +85,14 @@ def execute_with_docker(code: str, timeout: int = 30, image: str = 'python:3.12-
         '-v', f'{temp_file}:/code.py:ro', image, 'python3', '/code.py'
     ]
     
+    # Add command-line arguments if provided
+    if args:
+        cmd.extend(args.split())
+    
     return _execute_with_cleanup(cmd, temp_file, timeout, 'docker')
 
 
-def execute_with_bubblewrap(code: str, timeout: int = 30) -> dict:
+def execute_with_bubblewrap(code: str, timeout: int = 30, args: str = '') -> dict:
     """Execute code using bubblewrap."""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(code)
@@ -98,32 +106,47 @@ def execute_with_bubblewrap(code: str, timeout: int = 30) -> dict:
         '--ro-bind', temp_file, '/code.py', 'python3', '/code.py'
     ]
     
+    # Add command-line arguments if provided
+    if args:
+        cmd.extend(args.split())
+    
     return _execute_with_cleanup(cmd, temp_file, timeout, 'bubblewrap')
 
 
-def execute_sandboxed(code: str, timeout: int = 30, method: str = 'auto') -> dict:
-    """Execute code with automatic or specified sandbox method."""
+def execute_sandboxed(code: str, timeout: int = 30, method: str = 'auto', args: str = '') -> dict:
+    """Execute code with automatic or specified sandbox method.
+    
+    Args:
+        code: Python code to execute
+        timeout: Execution timeout in seconds
+        method: Sandbox method ('auto', 'firejail', 'docker', 'bubblewrap', 'subprocess')
+        args: Command-line arguments to pass to the Python script (space-separated string)
+    """
     
     if method == 'firejail':
-        return execute_with_firejail(code, timeout)
+        return execute_with_firejail(code, timeout, args)
     elif method == 'docker':
-        return execute_with_docker(code, timeout)
+        return execute_with_docker(code, timeout, args=args)
     elif method == 'bubblewrap':
-        return execute_with_bubblewrap(code, timeout)
+        return execute_with_bubblewrap(code, timeout, args)
     elif method == 'subprocess':
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(code)
             temp_file = f.name
         
         cmd = ['python3', temp_file]
+        # Add command-line arguments if provided
+        if args:
+            cmd.extend(args.split())
+        
         return _execute_with_cleanup(cmd, temp_file, timeout, 'subprocess')
     else:  # method == 'auto'
         # Try sandboxing methods in order of preference
         for sandbox_method in AUTO_METHODS:
-            result = execute_sandboxed(code, timeout, method=sandbox_method)
+            result = execute_sandboxed(code, timeout, method=sandbox_method, args=args)
             # If we got a "not found" error, try next method
             if 'not found' not in result['stderr']:
                 return result
         
         # Fallback to subprocess if all else fails
-        return execute_sandboxed(code, timeout, method='subprocess')
+        return execute_sandboxed(code, timeout, method='subprocess', args=args)

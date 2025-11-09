@@ -26,9 +26,8 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY environment variable not set")
 
-llm_model = "gemini-2.5-pro"
-nonthinking_llm_model = "gemini-2.5-flash-lite"
-print(f"📡 Initializing Gemini LLM ({llm_model})...")
+default_llm_model = "gemini-2.5-pro"
+print(f"📡 Initializing Gemini LLM ({default_llm_model})...")
 llm = genai.Client(api_key=api_key)
 llm_config = genai.types.GenerateContentConfig(
     temperature=0.3,
@@ -37,8 +36,7 @@ llm_config = genai.types.GenerateContentConfig(
 
 llm_config_coder = genai.types.GenerateContentConfig(
     temperature=0.3,
-    # Code execution disabled - test locally instead
-    # tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)],
+    tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)],
 )
 
 llm_config_goals_check = genai.types.GenerateContentConfig(
@@ -79,10 +77,11 @@ DEFAULT_TASK_CONFIG = {
     "utility_model": "gemini-2.5-flash-lite",
     "max_rounds": 25,
     "basename": "code",
-    "sandbox_method": "auto"  # Options: auto, firejail, docker, bubblewrap, subprocess
+    "sandbox_method": "auto",  # Options: auto, firejail, docker, bubblewrap, subprocess
+    "commandline_args": ""
 }
 
-def llm_query(query, config=llm_config, model=llm_model):
+def llm_query(query, config=llm_config, model=default_llm_model):
     # mark start time
     start_time = time.monotonic()
     response = llm.models.generate_content(
@@ -155,7 +154,7 @@ def generate_prompt(use_case: str, goals: str, previous_code: str = None, feedba
 
     return base_prompt
 
-def get_code_feedback(use_case: str, code: str, goals: str, code_output: str, reviewer_model: str = llm_model) -> str:
+def get_code_feedback(use_case: str, code: str, goals: str, code_output: str, reviewer_model: str = default_llm_model) -> str:
     print("🔍 Evaluating code against the goals...")
 
     script_path = "scripts/reviewer.md"
@@ -168,7 +167,7 @@ def get_code_feedback(use_case: str, code: str, goals: str, code_output: str, re
     })
     return llm_query(feedback_prompt, model=reviewer_model)["text"]
 
-def goals_met(feedback_text: str, goals: str, utility_model: str = llm_model) -> bool:
+def goals_met(feedback_text: str, goals: str, utility_model: str = default_llm_model) -> bool:
     """
     Uses the LLM to evaluate whether the goals have been met based on the feedback text.
     Returns True or False (parsed from LLM output).
@@ -191,6 +190,19 @@ def clean_code_block(code) -> str:
     if lines and lines[0].strip().startswith("```"):
         lines = lines[1:]
     if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines)
+
+def normalize_output(text: str) -> str:
+    lines = text.splitlines()
+    # remove trailing spaces
+    for i in range(len(lines)):
+        lines[i] = lines[i].rstrip()
+    # remove starting empty lines
+    while lines and lines[0] == "":
+        lines = lines[1:]
+    # remove ending empty lines
+    while lines and lines[-1] == "":
         lines = lines[:-1]
     return "\n".join(lines)
 
@@ -220,7 +232,7 @@ def save_to_file(filename: str, code: str) -> str:
     print(f"✅ Saved to: {filepath}")
     return str(filepath)
 
-def execute_code_locally(code: str, timeout: int = 30, sandbox_method: str = 'auto') -> dict:
+def execute_code_locally(code: str, timeout: int = 30, sandbox_method: str = 'auto', args: str = '') -> dict:
     """
     Execute Python code locally in a sandbox and capture output.
     Returns dict with 'success', 'stdout', 'stderr', 'exit_code'
@@ -231,8 +243,14 @@ def execute_code_locally(code: str, timeout: int = 30, sandbox_method: str = 'au
     - bubblewrap (Linux namespace sandboxing)
     - subprocess (basic execution with timeout)
     - auto (tries methods in order until one works)
+    
+    Args:
+        code: Python code to execute
+        timeout: Execution timeout in seconds
+        sandbox_method: Sandbox method to use
+        args: Command-line arguments to pass to the Python script
     """
-    return execute_sandboxed(code, timeout, method=sandbox_method)
+    return execute_sandboxed(code, timeout, method=sandbox_method, args=args)
 
 # --- Main Agent Function ---
 def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
@@ -341,32 +359,38 @@ def run_code_agent(use_case: str, goals: str, task_config: dict) -> str:
             save_to_file(code_output_filename, code_output)
 
         # Execute code locally to get actual output
-        print(f"🖥️  Executing code locally (sandbox: {sandbox_method})...")
-        local_exec_result = execute_code_locally(code, sandbox_method=sandbox_method)
-        
-        if local_exec_result['success']:
-            actual_method = local_exec_result.get('method', sandbox_method)
-            print(f"✅ Local execution successful (used: {actual_method})")
-            local_output = local_exec_result['stdout']
-            # Save local execution output
-            local_output_filename = f"{filename}_v{i+1}_local_output.txt"
-            save_to_file(local_output_filename, local_output)
-            
-            # Use local output for review if it differs from cloud output
-            if code_output and local_output != code_output:
-                print(f"⚠️  Local output differs from cloud execution")
-                print(f"   Cloud output length: {len(code_output)} chars")
-                print(f"   Local output length: {len(local_output)} chars")
-                # Use local output for review since that's what will actually run
-                code_output = local_output
-            elif not code_output:
-                # If no cloud output, use local output
-                code_output = local_output
+        commandline_args = task_config.get("commandline_args", "")
+        print(f"🖥️  Executing code locally (sandbox: {sandbox_method}, args: {commandline_args if commandline_args else 'none'})...")
+        local_exec_result = execute_code_locally(code, sandbox_method=sandbox_method, args=commandline_args)
+        local_exec_success = local_exec_result['success']
+
+        actual_method = local_exec_result.get('method', sandbox_method)
+        if local_exec_success:
+            print(f"✅ Local execution successful, method: {actual_method}")
         else:
-            print(f"❌ Local execution failed: {local_exec_result['stderr']}")
+            print(f"❌ Local execution returned error: {local_exec_result['stderr']}")
+
+        # Save local execution output
+        local_output = local_exec_result['stdout']
+        local_output_filename = f"{filename}_v{i+1}_local_output.txt"
+        save_to_file(local_output_filename, local_output)
+
+        if not local_exec_success:
             # Save error output for debugging
             error_filename = f"{filename}_v{i+1}_local_error.txt"
             save_to_file(error_filename, f"Exit code: {local_exec_result['exit_code']}\n\nStderr:\n{local_exec_result['stderr']}")
+
+        # Use local output for review if it differs from cloud output
+        if code_output and normalize_output(local_output) != normalize_output(code_output):
+            print(f"⚠️  Local output differs from cloud execution")
+            print(f"   Cloud output length: {len(code_output)} chars")
+            print(f"   Local output length: {len(local_output)} chars")
+            # Use local output for review since that's what will actually run
+            code_output = local_output
+        elif not code_output:
+            # If no cloud output, use local output
+            code_output = local_output
+
 
 
         print("\n📤 Submitting code for feedback review...")
