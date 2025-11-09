@@ -17,11 +17,15 @@ Before completing your job run the program and provide the program output to the
 
 # Previously generated code
 
+~~~python
 {previous_code}
+~~~
 
 # Feedback on previous version
 
 {feedback}
+
+{execution_warning}
 
 # Output formatting
 
@@ -53,3 +57,12 @@ This is the reasoning text.
 ~~~shell
 Hello world
 ~~~
+
+## CODE EXECUTION REQUIREMENT
+
+You MUST execute the Python code using your code_execution tool before providing the output.
+DO NOT simulate or guess the output - actually run the code.
+The program output MUST come from the actual execution, not your prediction.
+
+If you cannot execute the code, omit the program output section entirely.
+Never provide simulated or fake output.

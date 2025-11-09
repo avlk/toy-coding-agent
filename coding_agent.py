@@ -130,7 +130,7 @@ def load_task_config(config_name: str) -> dict:
         print("🔄 Using default configuration")
         return DEFAULT_TASK_CONFIG.copy()
 
-def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: str = None) -> str:
+def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: str = None, llm_did_not_execute: bool = False) -> str:
     """
     Generate prompt for code generation.
     
@@ -139,6 +139,7 @@ def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: s
         goals: Goals description (string)
         previous_code: Previous code (can be string or list, will be converted to string)
         feedback: Feedback text (string)
+        llm_did_not_execute: Whether the LLM failed to execute code in previous iteration
     
     Returns:
         Formatted prompt string
@@ -156,11 +157,26 @@ def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: s
     # Convert previous_code to string if it's a list
     previous_code_str = to_string(previous_code) if previous_code else None
     
+    # Add execution warning if LLM didn't execute in previous iteration
+    execution_warning = ""
+    if llm_did_not_execute and previous_code:
+        execution_warning = """
+## ⚠️ CRITICAL EXECUTION ISSUE
+
+In the previous iteration, you did NOT execute the code using the code_execution tool.
+This led to errors that were only discovered through local execution.
+The feedback above is based on ACTUAL execution results, not your predictions.
+
+**You MUST execute the code in this iteration** to verify your fixes actually work.
+DO NOT provide output without executing - hallucinated output leads to incorrect feedback loops.
+"""
+    
     base_prompt = script.format_map({
         "use_case": use_case,
         "goals": goals,
         "previous_code": previous_code_str,
-        "feedback": feedback
+        "feedback": feedback,
+        "execution_warning": execution_warning
     })
 
     return base_prompt
@@ -267,9 +283,12 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
 
     previous_code = None
     feedback = None
+    llm_did_not_execute = False  # Track if LLM failed to execute in previous iteration
+    
     for i in range(max_iterations):
         print(f"\n=== 🔁 Iteration {i + 1} of {max_iterations} ===")
-        prompt = generate_prompt(use_case, format_goals(goals), previous_code, feedback)
+        prompt = generate_prompt(use_case, format_goals(goals), previous_code, feedback, llm_did_not_execute)
+        save_to_file(f"{filename}_coder_prompt_v{i+1}.md", prompt, content_name="coder prompt")
         
         print("🚧 Generating code...")
         code_response = llm_query(prompt, config=llm_config_coder, model=coder_model)
@@ -279,6 +298,24 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
             # Save JSON response for debugging
             save_to_file(f"{filename}_coder_raw_v{i+1}.json", code_response["full"].model_dump_json(indent=2), content_name="raw LLM JSON response" )
             save_to_file(f"{filename}_coder_text_v{i+1}.md", code_response["text"], content_name="raw LLM text")
+
+            # Check if LLM actually executed code
+            response_obj = code_response["full"]
+            actually_executed = False
+            if hasattr(response_obj, 'candidates') and response_obj.candidates:
+                parts = response_obj.candidates[0].content.parts
+                for part in parts:
+                    if hasattr(part, 'code_execution_result') and part.code_execution_result:
+                        actually_executed = True
+                        break
+            
+            # Track for next iteration
+            llm_did_not_execute = not actually_executed
+            
+            if not actually_executed:
+                print("⚠️  WARNING: LLM did not execute code (output may be hallucinated)")
+                print("    Relying on local execution for accurate output")
+                print("    Next iteration will include execution warning in prompt")
 
             text = code_response["text"]
             code_blocks = find_code_blocks(text, delimiter="~~~", language="python")
@@ -337,29 +374,36 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
 
             # Save local execution output
             local_output = local_exec_result['stdout']
+            local_stderr = local_exec_result['stderr']
             local_output_filename = f"{filename}_v{i+1}_local_output.txt"
             save_to_file(local_output_filename, local_output, content_name="local execution output")
 
             if not local_exec_success:
                 # Save error output for debugging
                 error_filename = f"{filename}_v{i+1}_local_error.txt"
-                error_text = f"Exit code: {local_exec_result['exit_code']}\n\nStderr:\n{local_exec_result['stderr']}"
+                error_text = f"Exit code: {local_exec_result['exit_code']}\n\nStderr:\n{local_stderr}"
                 save_to_file(error_filename, error_text, content_name="local execution error")
+                
+                # Combine stdout and stderr for reviewer to see complete picture
+                combined_output = local_output
+                if local_stderr:
+                    combined_output += f"\n\n{'='*80}\n❌ EXECUTION FAILED\n{'='*80}\n"
+                    combined_output += f"Exit code: {local_exec_result['exit_code']}\n\n"
+                    combined_output += f"Error output:\n{local_stderr}"
+                local_output = combined_output
 
-            # Use local output for review if it differs from cloud output
-            # Normalize outputs to lists for comparison
-            local_output_lines = normalize_output(local_output)
-            code_output_lines = normalize_output(code_output) if code_output else []
+            # When local execution is enabled, ALWAYS use it as source of truth
+            # Optional: compare with LLM output for diagnostics
+            if code_output and not actually_executed:
+                print(f"ℹ️  LLM provided output without execution (likely hallucinated)")
+            elif code_output and actually_executed:
+                local_output_lines = normalize_output(local_output)
+                code_output_lines = normalize_output(code_output)
+                if local_output_lines != code_output_lines:
+                    print(f"ℹ️  Local and cloud outputs differ (using local as source of truth)")
             
-            if code_output and local_output_lines != code_output_lines:
-                print(f"⚠️  Local output differs from cloud execution")
-                print(f"   Cloud output length: {len(to_string(code_output))} chars")
-                print(f"   Local output length: {len(local_output)} chars")
-                # Use local output for review since that's what will actually run
-                code_output = to_lines(local_output)
-            elif not code_output:
-                # If no cloud output, use local output
-                code_output = to_lines(local_output)
+            # Always use local execution output (includes errors if execution failed)
+            code_output = to_lines(local_output)
         else:
             print("⏭️  Skipping local execution (using LLM-provided output only)")
 

@@ -14,5 +14,4 @@ If there are any unmet goals, respond with No.
 If there are any issues higher then Minor, return No.
 If some goals are only partially (or mostly) met, respond with No.
 
-If the goals are met, all tests pass and only Minor or cosmetic corrections are suggested, respond with Yes.
-Otherwise, respond with Yes.
+If the goals are met, all tests pass and only Minor or cosmetic corrections are left to be done, respond with Yes.
