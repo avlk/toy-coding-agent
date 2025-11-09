@@ -101,19 +101,27 @@ def save_to_file(filename: str, content, content_name="output") -> str:
 
 def clean_code_block(code) -> list:
     """
-    Remove code block markers (```) from beginning and end.
+    Remove code block markers (``` or ~~~) from beginning and end.
+    Also trim empty lines from the end.
     
     Args:
         code: Either a string or list of lines
     
     Returns:
-        List of lines with markers removed
+        List of lines with markers removed and trailing empty lines trimmed
     """
     lines = to_lines(code)
-    if lines and lines[0].strip().startswith("```"):
+    
+    # Remove code block markers (both ``` and ~~~)
+    if lines and (lines[0].strip().startswith("```") or lines[0].strip().startswith("~~~")):
         lines = lines[1:]
-    if lines and lines[-1].strip() == "```":
+    if lines and (lines[-1].strip() == "```" or lines[-1].strip() == "~~~"):
         lines = lines[:-1]
+    
+    # Trim empty lines from the end
+    while lines and not lines[-1].strip():
+        lines = lines[:-1]
+    
     return lines
 
 
