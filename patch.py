@@ -10,6 +10,8 @@ def is_unified_diff(patch: list[str]) -> bool:
     for line in patch:
         if re.match(UNIFIED_DIFF_HUNK_HEADER_REGEX, line):
             return True
+        if re.match(UNIFIED_DIFF_HUNK_HEADER_NO_COUNTS_REGEX, line):
+            return True
     return False
 
 def is_unified_diff_no_counts(patch: list[str]) -> bool:

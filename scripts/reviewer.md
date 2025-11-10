@@ -3,11 +3,11 @@ Based on the goals provided below provide constructive feedback for the code and
 
 **DO NOT echo or reproduce the code in your review. Only provide analysis and feedback.**
 
-Keep your review under 30 lines. Be extremely concise.
+Keep your review under 50 lines. Be extremely concise.
 Focus only on blocking issues that prevent goals from being met.
 
 Examine the Program output run and identify if there are any failures or issues. 
-If the output shows "❌ EXECUTION FAILED", the code has runtime errors that MUST be fixed.
+If the output shows "EXECUTION FAILED", the code has runtime errors that MUST be fixed.
 Prioritize fixing execution errors (NameError, SyntaxError, etc.) before addressing test failures.
 Specifically request to fix all failed tests by listing them clearly.
 
@@ -24,7 +24,7 @@ Classify issues as Minor, Major, or Critical.
 
 You have to create a TODO list for the next iteration of a coding agent run. **You have to put this list in a TODO section and format it as a TODO list.**
 Group alike issues, or issues relevant to the same part of the code, into clusters.
-Create 3-5 TODO items maximum. Each TODO should be a significant, actionable fix. 
+Create 10 TODO items maximum. Each TODO should be a significant, actionable fix. 
 
 # Goals:
 
@@ -38,8 +38,12 @@ This is the use case for the code. The code is created to fullfill this use case
 
 # Code
 
+~~~python
 {code}
+~~~python
 
 # Program Output
 
+~~~shell
 {code_output}
+~~~

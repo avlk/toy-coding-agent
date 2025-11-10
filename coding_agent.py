@@ -130,7 +130,7 @@ def load_task_config(config_name: str) -> dict:
         print("🔄 Using default configuration")
         return DEFAULT_TASK_CONFIG.copy()
 
-def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: str = None, llm_did_not_execute: bool = False) -> str:
+def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: str = None, llm_did_not_execute: bool = False, error_output: str = "") -> str:
     """
     Generate prompt for code generation.
     
@@ -161,14 +161,12 @@ def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: s
     execution_warning = ""
     if llm_did_not_execute and previous_code:
         execution_warning = """
-## ⚠️ CRITICAL EXECUTION ISSUE
+## CRITICAL EXECUTION ISSUE
 
-In the previous iteration, you did NOT execute the code using the code_execution tool.
-This led to errors that were only discovered through local execution.
+In the previous iteration, you did NOT execute the code using the code_execution tool. 
+This may be fine if you did not have runnable code yet, but if the code was supposed to be runnable,
+Some runtime or syntactic errors were discovered during local execution and taken care of by the reviewer. 
 The feedback above is based on ACTUAL execution results, not your predictions.
-
-**You MUST execute the code in this iteration** to verify your fixes actually work.
-DO NOT provide output without executing - hallucinated output leads to incorrect feedback loops.
 """
     
     base_prompt = script.format_map({
@@ -176,7 +174,8 @@ DO NOT provide output without executing - hallucinated output leads to incorrect
         "goals": goals,
         "previous_code": previous_code_str,
         "feedback": feedback,
-        "execution_warning": execution_warning
+        "execution_warning": execution_warning,
+        "error_output": error_output  # Placeholder for error output insertion
     })
 
     return base_prompt
@@ -270,7 +269,6 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
         # save the refined response for debugging
         refine_text = refine_response["text"]
         refine_json = json.loads(refine_text)
-        save_to_file(f"{filename}_refined_use_text.md", refine_text, content_name="raw LLM text")
         save_to_file(f"{filename}_refined_use_case.md", refine_json["refined_use_case"], content_name="refined use case")
         save_to_file(f"{filename}_refined_goals.md", refine_json["refined_goals"], content_name="refined goals")
         use_case = refine_json["refined_use_case"]
@@ -284,12 +282,13 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
     previous_code = None
     feedback = None
     llm_did_not_execute = False  # Track if LLM failed to execute in previous iteration
-    
+    error_output = ""  # To store execution error output
+
     for i in range(max_iterations):
         print(f"\n=== 🔁 Iteration {i + 1} of {max_iterations} ===")
-        prompt = generate_prompt(use_case, format_goals(goals), previous_code, feedback, llm_did_not_execute)
+        prompt = generate_prompt(use_case, format_goals(goals), previous_code, feedback, llm_did_not_execute, error_output=error_output)
         save_to_file(f"{filename}_coder_prompt_v{i+1}.md", prompt, content_name="coder prompt")
-        
+
         print("🚧 Generating code...")
         code_response = llm_query(prompt, config=llm_config_coder, model=coder_model)
         
@@ -381,9 +380,9 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
             if not local_exec_success:
                 # Save error output for debugging
                 error_filename = f"{filename}_v{i+1}_local_error.txt"
-                error_text = f"Exit code: {local_exec_result['exit_code']}\n\nStderr:\n{local_stderr}"
-                save_to_file(error_filename, error_text, content_name="local execution error")
-                
+                error_output = f"Exit code: {local_exec_result['exit_code']}\n\nStdout:\n{local_output}\nStderr:\n{local_stderr}"
+                save_to_file(error_filename, error_output, content_name="local execution error")
+
                 # Combine stdout and stderr for reviewer to see complete picture
                 combined_output = local_output
                 if local_stderr:
@@ -391,6 +390,8 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
                     combined_output += f"Exit code: {local_exec_result['exit_code']}\n\n"
                     combined_output += f"Error output:\n{local_stderr}"
                 local_output = combined_output
+            else:
+                error_output = ""  # Clear error output if execution was successful
 
             # When local execution is enabled, ALWAYS use it as source of truth
             # Optional: compare with LLM output for diagnostics
