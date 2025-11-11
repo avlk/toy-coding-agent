@@ -1,0 +1,12 @@
+- Code simple to understand
+- Functionally correct
+- Handles comprehensive edge cases
+- Computationally efficient
+- Prints the UPC bar code
+- Rendered bar code is correct
+- The code does not install any libraries or packages
+- bar code shall not be generated with an external library 
+- bar code can encode a string of alphanumeric letters or pure digits
+- bar code shall be scannable by a smartphone
+- unit tests are present
+- unit tests run with no errors

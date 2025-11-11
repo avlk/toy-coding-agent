@@ -1,8 +1,8 @@
-Write a code to generate QR codes. The code shall integrate text or URL.
+Write a code to generate QR codes. The QR code payload shall be text or URL.
 
 QR code size shall be adjustable with the length of it's payload. 
 
-Support QR code versions 1, 2 and 3. Select only one ECC level per version.
+Support QR code versions 1 and 2. Select only one ECC level for encoding. Use only UTF-8 as a character set. Autoselect mask pattern.
 
 The code shall be printed out in ASCII characters and shall be readable with smartphone. 
 

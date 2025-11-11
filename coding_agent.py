@@ -38,7 +38,7 @@ llm_config = genai.types.GenerateContentConfig(
 
 llm_config_coder = genai.types.GenerateContentConfig(
     temperature=0.3,
-    tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)],
+    tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution), genai.types.Tool(google_search=genai.types.GoogleSearch())],
 )
 
 llm_config_goals_check = genai.types.GenerateContentConfig(
@@ -130,7 +130,7 @@ def load_task_config(config_name: str) -> dict:
         print("🔄 Using default configuration")
         return DEFAULT_TASK_CONFIG.copy()
 
-def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: str = None, llm_did_not_execute: bool = False, error_output: str = "") -> str:
+def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: str = None, program_output: str = None) -> str:
     """
     Generate prompt for code generation.
     
@@ -139,7 +139,6 @@ def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: s
         goals: Goals description (string)
         previous_code: Previous code (can be string or list, will be converted to string)
         feedback: Feedback text (string)
-        llm_did_not_execute: Whether the LLM failed to execute code in previous iteration
     
     Returns:
         Formatted prompt string
@@ -156,26 +155,14 @@ def generate_prompt(use_case: str, goals: str, previous_code = None, feedback: s
     
     # Convert previous_code to string if it's a list
     previous_code_str = to_string(previous_code) if previous_code else None
-    
-    # Add execution warning if LLM didn't execute in previous iteration
-    execution_warning = ""
-    if llm_did_not_execute and previous_code:
-        execution_warning = """
-## CRITICAL EXECUTION ISSUE
-
-In the previous iteration, you did NOT execute the code using the code_execution tool. 
-This may be fine if you did not have runnable code yet, but if the code was supposed to be runnable,
-Some runtime or syntactic errors were discovered during local execution and taken care of by the reviewer. 
-The feedback above is based on ACTUAL execution results, not your predictions.
-"""
-    
+    program_output_str = to_string(program_output) if program_output else "N/A"
+        
     base_prompt = script.format_map({
         "use_case": use_case,
         "goals": goals,
         "previous_code": previous_code_str,
         "feedback": feedback,
-        "execution_warning": execution_warning,
-        "error_output": error_output  # Placeholder for error output insertion
+        "program_output": program_output_str  # Placeholder for program output insertion
     })
 
     return base_prompt
@@ -239,7 +226,7 @@ def create_filename(basename: str) -> str:
     return f"{basename}_{random_suffix}"
 
 # --- Main Agent Function ---
-def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: bool = True, local_execution: bool = True) -> str:
+def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: bool = True) -> str:
     coder_model = task_config["coder_model"]
     reviewer_model = task_config["reviewer_model"]
     utility_model = task_config["utility_model"]
@@ -282,11 +269,11 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
     previous_code = None
     feedback = None
     llm_did_not_execute = False  # Track if LLM failed to execute in previous iteration
-    error_output = ""  # To store execution error output
+    program_output = []  # To store program output
 
     for i in range(max_iterations):
         print(f"\n=== 🔁 Iteration {i + 1} of {max_iterations} ===")
-        prompt = generate_prompt(use_case, format_goals(goals), previous_code, feedback, llm_did_not_execute, error_output=error_output)
+        prompt = generate_prompt(use_case, format_goals(goals), previous_code, feedback, program_output)
         save_to_file(f"{filename}_coder_prompt_v{i+1}.md", prompt, content_name="coder prompt")
 
         print("🚧 Generating code...")
@@ -312,24 +299,16 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
             llm_did_not_execute = not actually_executed
             
             if not actually_executed:
-                print("⚠️  WARNING: LLM did not execute code (output may be hallucinated)")
-                print("    Relying on local execution for accurate output")
-                print("    Next iteration will include execution warning in prompt")
+                print("⚠️  WARNING: LLM did not execute code (the code may be non-runnable)")
 
             text = code_response["text"]
             code_blocks = find_code_blocks(text, delimiter="~~~", language="python")
             diff_blocks = find_code_blocks(text, delimiter="~~~", language="diff")
-            out_blocks = find_code_blocks(text, delimiter="~~~", language="shell")
 
             if code_blocks:
                 save_to_file(f"{filename}_coder_code_v{i+1}.py", code_blocks[0], content_name="code block")
             if diff_blocks:
                 save_to_file(f"{filename}_coder_diff_v{i+1}.patch", diff_blocks[0], content_name="diff patch")
-            if out_blocks:
-                save_to_file(f"{filename}_coder_out_v{i+1}.txt", out_blocks[0], content_name="code output")
-
-            # Keep code_output as list for internal processing
-            code_output = to_lines(out_blocks[0]) if len(out_blocks) > 0 else []
 
             if diff_blocks:
                 patch_lines = clean_code_block(diff_blocks[0])
@@ -354,62 +333,36 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
         code_filename = f"{filename}_v{i+1}.py"
         save_to_file(code_filename, code, content_name="intermediate code")
 
-        if code_output:
-            code_output_filename = f"{filename}_v{i+1}_output.txt"
-            save_to_file(code_output_filename, code_output, content_name="intermediate code output")
-
         # Execute code locally to get actual output (if enabled)
-        if local_execution:
-            commandline_args = task_config.get("commandline_args", "")
-            print(f"🖥️  Executing code locally (sandbox: {sandbox_method}, args: {commandline_args if commandline_args else 'none'})...")
-            local_exec_result = execute_sandboxed(to_string(code), method=sandbox_method, args=commandline_args)
-            local_exec_success = local_exec_result['success']
+        commandline_args = task_config.get("commandline_args", "")
+        print(f"🖥️  Executing code locally (sandbox: {sandbox_method}, args: {commandline_args if commandline_args else 'none'})...")
+        local_exec_result = execute_sandboxed(to_string(code), method=sandbox_method, args=commandline_args)
+        local_exec_success = local_exec_result['success']
 
-            actual_method = local_exec_result.get('method', sandbox_method)
-            if local_exec_success:
-                print(f"✅ Local execution successful, method: {actual_method}")
-            else:
-                print(f"❌ Local execution returned error: {local_exec_result['stderr']}")
-
-            # Save local execution output
-            local_output = local_exec_result['stdout']
-            local_stderr = local_exec_result['stderr']
-            local_output_filename = f"{filename}_v{i+1}_local_output.txt"
-            save_to_file(local_output_filename, local_output, content_name="local execution output")
-
-            if not local_exec_success:
-                # Save error output for debugging
-                error_filename = f"{filename}_v{i+1}_local_error.txt"
-                error_output = f"Exit code: {local_exec_result['exit_code']}\n\nStdout:\n{local_output}\nStderr:\n{local_stderr}"
-                save_to_file(error_filename, error_output, content_name="local execution error")
-
-                # Combine stdout and stderr for reviewer to see complete picture
-                combined_output = local_output
-                if local_stderr:
-                    combined_output += f"\n\n{'='*80}\n❌ EXECUTION FAILED\n{'='*80}\n"
-                    combined_output += f"Exit code: {local_exec_result['exit_code']}\n\n"
-                    combined_output += f"Error output:\n{local_stderr}"
-                local_output = combined_output
-            else:
-                error_output = ""  # Clear error output if execution was successful
-
-            # When local execution is enabled, ALWAYS use it as source of truth
-            # Optional: compare with LLM output for diagnostics
-            if code_output and not actually_executed:
-                print(f"ℹ️  LLM provided output without execution (likely hallucinated)")
-            elif code_output and actually_executed:
-                local_output_lines = normalize_output(local_output)
-                code_output_lines = normalize_output(code_output)
-                if local_output_lines != code_output_lines:
-                    print(f"ℹ️  Local and cloud outputs differ (using local as source of truth)")
-            
-            # Always use local execution output (includes errors if execution failed)
-            code_output = to_lines(local_output)
+        actual_method = local_exec_result.get('method', sandbox_method)
+        if local_exec_success:
+            print(f"✅ Local execution successful, method: {actual_method}")
         else:
-            print("⏭️  Skipping local execution (using LLM-provided output only)")
+            print(f"❌ Local execution returned error: {local_exec_result['stderr']}")
+
+        # Save local execution output
+        program_output = ["Program exited with code " + str(local_exec_result['exit_code'])]
+        program_output.extend(["", "Stdout:", "", "~~~shell"])
+        program_output.extend(normalize_output(to_lines(local_exec_result['stdout'])))
+        program_output.extend(["~~~", "", "Stderr:", "", "~~~shell"])
+        program_output.extend(normalize_output(to_lines(local_exec_result['stderr'])))
+        program_output.extend(["~~~"])
+
+        program_output_filename = f"{filename}_v{i+1}_output.txt"
+        save_to_file(program_output_filename, program_output, content_name="local execution output")
+
+        if not local_exec_success:
+            print(f"\n\n{'='*80}\n❌ EXECUTION FAILED\n{'='*80}\n")
+            print(f"Exit code: {local_exec_result['exit_code']}\n\n")
+            print(f"Error output:\n{local_exec_result['stderr']}")
 
         print("\n📤 Submitting code for feedback review...")
-        feedback = get_code_feedback(use_case, to_string(code), format_goals(goals), to_string(code_output), reviewer_model)
+        feedback = get_code_feedback(use_case, to_string(code), format_goals(goals), to_string(program_output), reviewer_model)
         feedback_text = feedback.strip()
         # print("\n📥 Feedback Received:\n" + "-" * 50 + f"\n{feedback_text}\n" + "-" * 50)
 
@@ -441,11 +394,7 @@ if __name__ == "__main__":
                         help="Refine use case and goals before starting (default)")
     parser.add_argument("--no-refine-goals", dest="refine_goals", action="store_false",
                         help="Skip goals refinement, use original goals as-is")
-    parser.add_argument("--local-execution", dest="local_execution", action="store_true",
-                        help="Execute code locally to verify output (default)")
-    parser.add_argument("--no-local-execution", dest="local_execution", action="store_false",
-                        help="Skip local execution, rely only on LLM-provided output")
-    parser.set_defaults(refine_goals=True, local_execution=True)
+    parser.set_defaults(refine_goals=True)
     
     args = parser.parse_args()
     config_name = args.config_name
@@ -459,5 +408,5 @@ if __name__ == "__main__":
     
     use_case_input = load_file(f"tasks/{config_name}/hl_spec.md")
     goals_input = load_file(f"tasks/{config_name}/ac.md")
-    run_code_agent(use_case_input, goals_input, task_config, refine_goals=args.refine_goals, local_execution=args.local_execution)
+    run_code_agent(use_case_input, goals_input, task_config, refine_goals=args.refine_goals)
     
