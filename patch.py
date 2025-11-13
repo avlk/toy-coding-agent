@@ -39,31 +39,7 @@ class Hunk:
         self.match = []
         self.replace = []
 
-        patch_ops = ['+', '-']
-        # count context lines from start
-        starting_context = 0
         for line in lines:
-            if line[0] in patch_ops:
-                break
-            starting_context += 1
-        # count context lines from end
-        trailing_context = 0
-        for idx in range(len(lines) - 1, -1, -1):
-            if lines[idx][0] in patch_ops:
-                break
-            trailing_context += 1
-
-        # Adjust context lines
-        patch_start = 0
-        patch_end = len(lines)
-        if starting_context > Hunk.MAX_STARTING_CONTEXT:
-            print("Trimmed starting context by", starting_context - Hunk.MAX_STARTING_CONTEXT)
-            patch_start = starting_context - Hunk.MAX_STARTING_CONTEXT
-        if trailing_context > Hunk.MAX_TRAILING_CONTEXT:
-            print("Trimmed trailing context by", trailing_context - Hunk.MAX_TRAILING_CONTEXT)
-            patch_end = len(lines) - (trailing_context - Hunk.MAX_TRAILING_CONTEXT)
-
-        for line in lines[patch_start:patch_end]:
             if line.startswith('+'):
                 line_content = line[1:]  # Skip the first character (+, -, or space)
                 self.replace.append(line_content)
@@ -77,6 +53,44 @@ class Hunk:
                     line_content = line # Fix for faulty LLM patch
                 self.match.append(line_content)
                 self.replace.append(line_content)
+
+        # Adjust starting and trailing context, and trim match/replace lists accordingly
+        # LLM's may add too much context, but it can also create pairs of +/- lines that do not differ
+        # We will keep at most MAX_STARTING_CONTEXT lines of context at the start and MAX_TRAILING_CONTEXT lines at the end
+        # To do this, we match actual self.match and self.replace lines from the start and end
+        # and trim the rest
+        actual_start = 0
+        # count actual matching context lines from the start
+        for i in range(min(len(self.match), len(self.replace))):
+            if self.match[i] == self.replace[i]:
+                actual_start += 1
+            else:
+                break
+        if actual_start > self.MAX_STARTING_CONTEXT:
+            trim_amount = actual_start - self.MAX_STARTING_CONTEXT
+            print(f"Trimming {trim_amount} starting context lines")
+            self.match = self.match[trim_amount:]
+            self.replace = self.replace[trim_amount:]
+
+        if not self.match or not self.replace:
+            return
+
+        actual_end = 0
+        # count actual matching context lines from the end
+        for i in range(1, min(len(self.match), len(self.replace)) + 1):
+            if self.match[-i] == self.replace[-i]:
+                actual_end += 1
+            else:
+                break
+        if actual_end > self.MAX_TRAILING_CONTEXT:
+            trim_amount = actual_end - self.MAX_TRAILING_CONTEXT
+            if trim_amount > 0:
+                print(f"Trimming {trim_amount} trailing context lines")
+                self.match = self.match[:-trim_amount]
+                self.replace = self.replace[:-trim_amount]
+
+    def empty(self) -> bool:
+        return self.match_count() == 0 
 
     def match_count(self) -> int:
         return len(self.match)
@@ -167,6 +181,9 @@ def patch_code(code_lines: list[str], patch_lines: list[str]):
     # identify all hunks to apply
     application_list = []
     for hunk in hunk_list:
+        if hunk.empty():
+            print("[SKIP] Useless hunk")
+            continue
         print("Hunk", hunk)
         hunk_start = hunk.match_code(code_lines, 0)
         if hunk_start is None:
