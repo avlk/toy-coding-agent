@@ -1,9 +1,13 @@
 {
-  "coder_model": "gemini-2.5-flash",
+  "coder_model": "gemini-2.5-pro",
   "reviewer_model": "gemini-2.5-flash",
   "utility_model": "gemini-2.5-flash-lite",
   "max_rounds": 15,
   "basename": "upc",
   "sandbox_method": "firejail",
-  "commandline_args": "--test"
+  "commandline_args": "--test",
+  "urls": [
+    "https://www.barcodefaq.com/1d/code-128",
+    "https://en.wikipedia.org/wiki/Code_128"
+  ]
 }

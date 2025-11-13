@@ -102,7 +102,7 @@ def save_to_file(filename: str, content, content_name="output") -> str:
 def clean_code_block(code) -> list:
     """
     Remove code block markers (``` or ~~~) from beginning and end.
-    Also trim empty lines from the end.
+    Also it removes empty lines in sequences if there are more than 2 consecutive empty lines.
     
     Args:
         code: Either a string or list of lines
@@ -118,32 +118,43 @@ def clean_code_block(code) -> list:
     if lines and (lines[-1].strip() == "```" or lines[-1].strip() == "~~~"):
         lines = lines[:-1]
     
-    # Trim empty lines from the end
-    while lines and not lines[-1].strip():
-        lines = lines[:-1]
-    
+    # Trim empty lines if there are more than 2
+    empty_line_count = 0
+    new_lines = []
+    for line in lines:
+        if line.strip() == "":
+            empty_line_count += 1
+            if empty_line_count <= 2:
+                new_lines.append(line)
+        else:
+            empty_line_count = 0
+            new_lines.append(line)
+    lines = new_lines
     return lines
 
 
-def normalize_output(text) -> list:
+def code_quality_gate(code) -> bool:
     """
-    Normalize output by removing trailing spaces and empty lines at start/end.
-    
-    Args:
-        text: Either a string or list of lines
-    
-    Returns:
-        List of normalized lines
+    Returns True if the code meets quality standards, and False otherwise
     """
-    lines = to_lines(text)
-    # remove trailing spaces
-    lines = [line.rstrip() for line in lines]
-    # remove starting empty lines
-    while lines and lines[0] == "":
-        lines = lines[1:]
-    # remove ending empty lines
-    while lines and lines[-1] == "":
-        lines = lines[:-1]
-    return lines
+    lines = to_lines(code)
+
+    max_line_length = 2048 # model often returns very long lines with no meaning, repeating same one or two characters
+    max_same_lines = 10 # model often hallucinates returning the same line until MAX_TOKENS
+
+    # Return False if there are too long lines or there are more than X consecutive lines with the same content
+    for i, line in enumerate(lines):
+        if len(line) > max_line_length:
+            print(f"❌ Line {i+1} exceeds max length ({max_line_length})")
+            return False
+        if i > 0 and line == lines[i-1]:
+            same_line_count += 1
+            if same_line_count > max_same_lines:
+                print(f"❌ Line {i+1} is a duplicate of the previous line ({same_line_count} times)")
+                return False
+        else:
+            same_line_count = 0
+
+    return True
 
 

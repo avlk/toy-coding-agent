@@ -17,6 +17,7 @@ import tempfile
 import argparse
 from pathlib import Path
 from google import genai
+from google.genai import errors
 from patch import patch_code, is_unified_diff
 from md_parser import find_code_blocks
 from sandbox_execution import execute_sandboxed
@@ -38,7 +39,10 @@ llm_config = genai.types.GenerateContentConfig(
 
 llm_config_coder = genai.types.GenerateContentConfig(
     temperature=0.3,
-    tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution), genai.types.Tool(google_search=genai.types.GoogleSearch())],
+    tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution), 
+           genai.types.Tool(google_search=genai.types.GoogleSearch()),
+           {"url_context": {}}
+       ],
 )
 
 llm_config_goals_check = genai.types.GenerateContentConfig(
@@ -87,21 +91,36 @@ DEFAULT_TASK_CONFIG = {
 token_tracker = TokenUsageTracker()
 
 def llm_query(query, config=llm_config, model=default_llm_model):
-    # mark start time
-    start_time = time.monotonic()
-    response = llm.models.generate_content(
-        model=model, contents=query, config=config
-    )
-    end_time = time.monotonic()
-    # Calculate generation time in seconds
-    generation_time = end_time - start_time
-    text = response.text
+    max_retries = 10
+    
+    for attempt in range(max_retries):
+        try:
+            # mark start time
+            start_time = time.monotonic()
+            response = llm.models.generate_content(
+                model=model, contents=query, config=config
+            )
+            end_time = time.monotonic()
+            # Calculate generation time in seconds
+            generation_time = end_time - start_time
+            text = response.text
 
-    # Print usage info and record statistics
-    token_tracker.print_call_info(response.usage_metadata, generation_time)
-    token_tracker.record(model, response.usage_metadata, generation_time)
+            # Print usage info and record statistics
+            token_tracker.print_call_info(response.usage_metadata, generation_time)
+            token_tracker.record(model, response.usage_metadata, generation_time)
 
-    return {"text": text, "full": response, "usage": response.usage_metadata, "response_time": generation_time}
+            return {"text": text, "full": response, "usage": response.usage_metadata, "response_time": generation_time}
+        
+        except errors.ServerError as e:
+            if attempt < max_retries - 1:
+                # 30 seconds for 503, proportional backoff for other 5xx errors
+                delay = 30 * (attempt + 1) if e.code == 503 else 5 * (attempt + 1)
+                print(f"⚠️  Server error: {e}")
+                print(f"🔄 Retrying in {delay}s... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+            else:
+                print(f"❌ Server error after {max_retries} retries: {e}")
+                raise
 
 # --- Agent-Specific Functions ---
 
@@ -266,6 +285,12 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
         if isinstance(goals, str):
             goals = to_lines(goals)
 
+    # Append URLs to use case if provided in task config
+    if "urls" in task_config:
+        use_case += f"\n\nThe following URLs provide additional context:\n"
+        for url in task_config["urls"]:
+            use_case += f"- {url}\n"
+
     previous_code = None
     feedback = None
     llm_did_not_execute = False  # Track if LLM failed to execute in previous iteration
@@ -311,6 +336,9 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
                 save_to_file(f"{filename}_coder_diff_v{i+1}.patch", diff_blocks[0], content_name="diff patch")
 
             if diff_blocks:
+                if not code_quality_gate(diff_blocks[0]):
+                    print("❌ Model generated some bad output, repeating iteration")
+                    continue
                 patch_lines = clean_code_block(diff_blocks[0])
                 print("🛠️ Detected unified diff patch. Applying patch to previous code.")
                 patch_filename = f"{filename}_v{i+1}.patch"
@@ -320,11 +348,13 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
                 prev_code_lines = to_lines(previous_code)
                 patch_code(prev_code_lines, patch_lines)
                 code = prev_code_lines  # Now a list
+            elif code_blocks:
+                if not code_quality_gate(code_blocks[0]):
+                    print("❌ Model generated some bad output, repeating iteration")
+                    continue
+                code = clean_code_block(code_blocks[0])  # Now a list
             else:
-                if code_blocks:
-                    code = clean_code_block(code_blocks[0])  # Now a list
-                else:
-                    code = []
+                code = []
         except Exception as e:
             print(f"❌ Error processing LLM output: {e}")
             print("Restarting iteration...")
@@ -348,9 +378,9 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
         # Save local execution output
         program_output = ["Program exited with code " + str(local_exec_result['exit_code'])]
         program_output.extend(["", "Stdout:", "", "~~~shell"])
-        program_output.extend(normalize_output(to_lines(local_exec_result['stdout'])))
+        program_output.extend(to_lines(local_exec_result['stdout']))
         program_output.extend(["~~~", "", "Stderr:", "", "~~~shell"])
-        program_output.extend(normalize_output(to_lines(local_exec_result['stderr'])))
+        program_output.extend(to_lines(local_exec_result['stderr']))
         program_output.extend(["~~~"])
 
         program_output_filename = f"{filename}_v{i+1}_output.txt"
@@ -363,6 +393,9 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
 
         print("\n📤 Submitting code for feedback review...")
         feedback = get_code_feedback(use_case, to_string(code), format_goals(goals), to_string(program_output), reviewer_model)
+        if not feedback:
+            print("❌ No feedback received, repeating iteration...")
+            continue
         feedback_text = feedback.strip()
         # print("\n📥 Feedback Received:\n" + "-" * 50 + f"\n{feedback_text}\n" + "-" * 50)
 
