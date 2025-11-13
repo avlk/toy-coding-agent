@@ -113,8 +113,8 @@ def llm_query(query, config=llm_config, model=default_llm_model):
         
         except errors.ServerError as e:
             if attempt < max_retries - 1:
-                # 30 seconds for 503, proportional backoff for other 5xx errors
-                delay = 30 * (attempt + 1) if e.code == 503 else 5 * (attempt + 1)
+                # 15 seconds for 503, 5 seconds for other 5xx errors
+                delay = 15 if e.code == 503 else 5
                 print(f"⚠️  Server error: {e}")
                 print(f"🔄 Retrying in {delay}s... (attempt {attempt + 1}/{max_retries})")
                 time.sleep(delay)
@@ -388,8 +388,34 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
 
         if not local_exec_success:
             print(f"\n\n{'='*80}\n❌ EXECUTION FAILED\n{'='*80}\n")
-            print(f"Exit code: {local_exec_result['exit_code']}\n\n")
-            print(f"Error output:\n{local_exec_result['stderr']}")
+            # print(f"Exit code: {local_exec_result['exit_code']}\n\n")
+            # print(f"Error output:\n{local_exec_result['stderr']}")
+
+        # check if the program contains SyntaxError
+        if "SyntaxError" in local_exec_result['stderr']:
+            # Run syntax fix iteration
+            print("\n🚨 SyntaxError detected in program output. Running syntax fix iteration...")
+            # load prompt for syntax fix
+            syntax_fix_prompt = load_file("scripts/syntax fix.md")
+            syntax_fix_prompt_formatted = syntax_fix_prompt.format_map({
+                "previous_code": to_string(code),
+                "program_output": to_string(program_output)
+            })
+            save_to_file(f"{filename}_syntax_fix_prompt_v{i+1}.md", syntax_fix_prompt_formatted, content_name="syntax fix prompt")
+            syntax_fix_response = llm_query(syntax_fix_prompt_formatted, model=coder_model) # Or utility_model?
+            syntax_fix_text = syntax_fix_response["text"]
+            save_to_file(f"{filename}_syntax_fix_response_v{i+1}.md", syntax_fix_text, content_name="syntax fix response")
+            diff_blocks = find_code_blocks(syntax_fix_text, delimiter="~~~", language="diff")
+            if diff_blocks:
+                print("🛠️ Applying syntax fix diff patch to current code.")
+                patch_lines = clean_code_block(diff_blocks[0])
+                code_lines = to_lines(code)
+                patch_code(code_lines, patch_lines)
+                code = code_lines  # Now a list
+                # Save fixed code
+                fixed_code_filename = f"{filename}_v{i+1}_syntax_fixed.py"
+                save_to_file(fixed_code_filename, code, content_name="syntax fixed code")
+            continue  # Restart iteration after syntax fix
 
         print("\n📤 Submitting code for feedback review...")
         feedback = get_code_feedback(use_case, to_string(code), format_goals(goals), to_string(program_output), reviewer_model)
