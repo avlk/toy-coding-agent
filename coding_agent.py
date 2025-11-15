@@ -49,9 +49,21 @@ llm_config_goals_check = genai.types.GenerateContentConfig(
     temperature=0.3,
     responseMimeType="text/x.enum",
     responseSchema={
-        "type": "string",
-        "enum": ["Yes", "No"],
-    },
+        "type": "object",
+        "properties": {
+            "result": {
+                "type": "string",
+                "enum": ["Yes", "No"],
+                "description": "Whether the goals have been met"
+            },
+            "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Completion score (0-100) of the solution against the goals"
+            }
+        }
+    }
 )
 
 llm_config_refine_task = genai.types.GenerateContentConfig(
@@ -199,10 +211,10 @@ def get_code_feedback(use_case: str, code: str, goals: str, code_output: str, re
     })
     return llm_query(feedback_prompt, model=reviewer_model)["text"]
 
-def goals_met(feedback_text: str, goals: str, utility_model: str = default_llm_model) -> bool:
+def goals_met(feedback_text: str, goals: str, utility_model: str = default_llm_model) -> tuple[bool, int]:
     """
     Uses the LLM to evaluate whether the goals have been met based on the feedback text.
-    Returns True or False (parsed from LLM output).
+    Returns tuple of (goals_met: bool, score: int).
     """
     script_path = "scripts/goals check.md"
     script = load_file(script_path)
@@ -210,9 +222,20 @@ def goals_met(feedback_text: str, goals: str, utility_model: str = default_llm_m
         "goals": goals,
         "feedback_text": feedback_text
     })  
-    response = llm_query(review_prompt, config=llm_config_goals_check, model=utility_model)["text"].strip().lower()
-    print(f"🎯 Goals met evaluation: {response}")
-    return response == "yes"
+    response_text = llm_query(review_prompt, config=llm_config_goals_check, model=utility_model)["text"].strip()
+    
+    # Clean markdown code blocks using utils function
+    cleaned_text = to_string(clean_code_block(response_text))
+    
+    try:
+        response_json = json.loads(cleaned_text)
+        result = response_json.get("result", "No").lower()
+        score = response_json.get("score", 0)
+        return (result == "yes", score)
+    except json.JSONDecodeError:
+        print(f"⚠️  Failed to parse goals check response as JSON: {cleaned_text}")
+        # Fallback to simple yes/no check
+        return (cleaned_text.lower() == "yes", 0)
 
 def add_comment_header(code, use_case, task_config: dict) -> list:
     """
@@ -295,6 +318,7 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
     feedback = None
     llm_did_not_execute = False  # Track if LLM failed to execute in previous iteration
     program_output = []  # To store program output
+    scores = []  # Track completion scores across iterations
 
     for i in range(max_iterations):
         print(f"\n=== 🔁 Iteration {i + 1} of {max_iterations} ===")
@@ -391,10 +415,10 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
             # print(f"Exit code: {local_exec_result['exit_code']}\n\n")
             # print(f"Error output:\n{local_exec_result['stderr']}")
 
-        # check if the program contains SyntaxError
-        if "SyntaxError" in local_exec_result['stderr']:
+        # check if the program contains SyntaxError or IndentationError
+        if "SyntaxError" in local_exec_result['stderr'] or "IndentationError" in local_exec_result['stderr']:
             # Run syntax fix iteration
-            print("\n🚨 SyntaxError detected in program output. Running syntax fix iteration...")
+            print("\n🚨 SyntaxError or IndentationError detected in program output. Running syntax fix iteration...")
             # load prompt for syntax fix
             syntax_fix_prompt = load_file("scripts/syntax fix.md")
             syntax_fix_prompt_formatted = syntax_fix_prompt.format_map({
@@ -428,11 +452,15 @@ def run_code_agent(use_case: str, goals: str, task_config: dict, refine_goals: b
         review_filename = f"{filename}_review_v{i+1}.txt"
         save_to_file(review_filename, feedback_text, content_name="code review")
 
-        if goals_met(feedback_text, format_goals(goals), utility_model):
+        met, score = goals_met(feedback_text, format_goals(goals), utility_model)
+        scores.append(score)
+        
+        if met:
             print("✅ LLM confirms goals are met. Stopping iteration.")
             break
 
         print("🛠️ Goals not fully met. Preparing for next iteration...")
+        print(f"📊 Completion score progression: {scores}")
         previous_code = code
 
     # Print token usage summary
