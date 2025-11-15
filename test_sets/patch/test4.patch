@@ -1,0 +1,582 @@
+--- a/main.py
++++ b/main.py
+@@ -62,25 +62,49 @@
+     60: (1,2,1,4,1,1), 61: (1,4,1,1,2,1), 62: (1,4,1,2,1,1),
+     63: (1,1,1,2,2,3),
+     64: (1,1,1,3,2,2),
+-    65: (1,1,2,2,1,3),
+-    66: (1,1,2,3,1,2),
+-    67: (1,2,1,1,2,3),
+-    68: (1,2,1,3,1,2),
+-    69: (1,3,1,1,2,2),
+-    70: (1,3,1,2,1,2),
+-    71: (1,1,2,1,3,2),
+-    72: (1,1,2,2,3,1),
+-    73: (1,2,1,1,3,2),
+-    74: (1,2,1,2,3,1),
+-    75: (1,2,3,1,1,2),
+-    76: (1,2,3,2,1,1),
+-    77: (1,1,3,2,1,2),
+-    78: (1,2,3,1,2,1),
+-    79: (1,1,2,1,2,3),
+-    80: (1,1,2,3,2,1),
+-    81: (1,3,2,1,2,1),
+-    82: (1,1,1,1,4,2),
+-    83: (1,1,1,2,4,1),
+-    84: (1,1,1,4,2,1),
+-    85: (1,4,1,1,1,2),
+-    86: (1,4,1,2,1,1),
+-    87: (1,1,2,1,4,1),
+-    88: (1,1,4,1,2,1),
+-    89: (1,2,1,1,4,1),
+-    90: (1,2,1,4,1,1),
+-    91: (1,4,1,1,2,1),
+-    92: (1,2,2,1,1,3), 93: (1,2,2,3,1,1), 94: (1,2,3,1,1,1), 95: (1,1,1,1,2,4), # DEL (ASCII 127)
++    65: (1,2,1,1,3,2), # ASCII '_'
++    66: (1,2,1,2,3,1), # ASCII '`'
++    67: (1,2,3,1,1,2), # ASCII 'a'
++    68: (1,2,3,2,1,1), # ASCII 'b'
++    69: (1,1,3,2,1,2), # ASCII 'c'
++    70: (1,2,3,1,2,1), # ASCII 'd'
++    71: (1,1,2,1,2,3), # ASCII 'e'
++    72: (1,1,2,3,2,1), # ASCII 'f'
++    73: (1,3,2,1,2,1), # ASCII 'g'
++    74: (1,1,1,1,4,2), # ASCII 'h'
++    75: (1,1,1,2,4,1), # ASCII 'i'
++    76: (1,1,1,4,2,1), # ASCII 'j'
++    77: (1,4,1,1,1,2), # ASCII 'k'
++    78: (1,4,1,2,1,1), # ASCII 'l'
++    79: (1,1,2,1,4,1), # ASCII 'm'
++    80: (1,1,4,1,2,1), # ASCII 'n'
++    81: (1,2,1,1,4,1), # ASCII 'o'
++    82: (1,2,1,4,1,1), # ASCII 'p'
++    83: (1,4,1,1,2,1), # ASCII 'q'
++    84: (1,4,1,2,1,1), # ASCII 'r'
++    85: (1,1,2,2,1,3), # ASCII 's'
++    86: (1,1,2,3,1,2), # ASCII 't'
++    87: (1,1,3,1,2,2), # ASCII 'u'
++    88: (1,1,3,2,2,1), # ASCII 'v'
++    89: (1,2,2,1,1,3), # ASCII 'w'
++    90: (1,2,2,3,1,1), # ASCII 'x'
++    91: (1,2,3,1,1,1), # ASCII 'y'
++    92: (1,1,1,1,2,4), # ASCII 'z'
++    93: (1,1,1,2,1,4), # ASCII '{'
++    94: (1,1,1,4,1,2), # ASCII '|'
++    95: (1,1,2,1,1,4), # ASCII '}' # DEL (ASCII 127)
+     # Special function codes and start/stop codes (values 96-106)
+-    96: (1,1,1,2,2,3), # FNC3 (Code B) - same pattern as value 63
+-    97: (1,1,1,3,2,2), # FNC2 (Code B) - same pattern as value 64
+-    98: (1,1,2,2,1,3), # Shift (Code B) - same pattern as value 65
+-    99: (1,1,2,3,1,2), # Code C (Code B) - same pattern as value 66
+-    100: (1,2,1,1,2,3), # Code B (Code B) - same pattern as value 67
+-    101: (1,2,1,3,1,2), # FNC4 (Code B) - same pattern as value 68
+-    102: (1,3,1,1,2,2), # FNC1 (Code B) - same pattern as value 69
++    # Note: Patterns for 96-102 are identical to patterns for 33-39 respectively.
++    # This is standard for Code 128 function codes.
++    96: (1,1,1,2,2,3), # FNC3 (same pattern as value 33)
++    97: (1,1,1,3,2,2), # FNC2 (same pattern as value 34)
++    98: (1,1,2,2,1,3), # Shift (same pattern as value 35)
++    99: (1,1,2,3,1,2), # Code C (same pattern as value 36)
++    100: (1,2,1,1,2,3), # Code B (same pattern as value 37)
++    101: (1,2,1,3,1,2), # FNC4 (same pattern as value 38)
++    102: (1,3,1,1,2,2), # FNC1 (same pattern as value 39)
+     103: (2,1,2,1,4,1), # Start A
+     104: (2,1,2,3,2,1), # Start B
+     105: (2,1,4,1,2,1), # Start C
+@@ -207,17 +231,10 @@
+     quiet_zone_str = _SPACE_CHAR * quiet_zone_width
+ 
+     if _USE_ANSI_COLORS:
+-        rendered_line_segments = []
+-        # Set white background for the entire line
+-        rendered_line_segments.append(_ANSI_WHITE_BG)
+-        # Add leading quiet zone (white spaces on white background)
+-        rendered_line_segments.append(quiet_zone_str)
+-
+-        # Process the raw pattern
+-        for char in raw_pattern:
+-            if char == _BAR_CHAR:
+-                # Black bar on white background
+-                rendered_line_segments.append(_ANSI_BLACK_FG + _BAR_CHAR)
+-            else:
+-                # White space on white background (reset foreground to default, which will appear white)
+-                rendered_line_segments.append(_ANSI_RESET + _ANSI_WHITE_BG + _SPACE_CHAR)
+-        
+-        # Add trailing quiet zone (white spaces on white background)
+-        # Ensure foreground is reset before the trailing quiet zone
+-        rendered_line_segments.append(_ANSI_RESET + _ANSI_WHITE_BG + quiet_zone_str)
+-        # Final reset for the entire line
+-        rendered_line_segments.append(_ANSI_RESET)
+-        
+-        colored_pattern_line = "".join(rendered_line_segments)
++        # Apply white background to the entire line, then black foreground for bars.
++        # Quiet zones are white spaces on a white background (default foreground).
++        colored_pattern_line = (
++            _ANSI_WHITE_BG + quiet_zone_str +
++            raw_pattern.replace(_BAR_CHAR, _ANSI_BLACK_FG + _BAR_CHAR + _ANSI_WHITE_BG) +
++            quiet_zone_str + _ANSI_RESET
++        )
+     else:
+         # Fallback to plain ASCII without colors
+         colored_pattern_line = quiet_zone_str + raw_pattern + quiet_zone_str
+@@ -311,7 +328,7 @@
+         calculated_checksum = checksum_sum % 103
+ 
+         values_with_checksum = encode_string(input_str)
+-        self.assert_equals(values_with_checksum[-2], calculated_checksum, f"Checksum for '{input_str}' (calculated)")
+-        self.assert_equals(values_with_checksum[-2], 55, "Known checksum value for 'Agentic AI'") # Corrected hardcoded value
++        self.assert_equals(values_with_checksum[-2], calculated_checksum, f"Checksum for '{input_str}' (calculated)") # Should be 51
++        self.assert_equals(values_with_checksum[-2], 51, "Known checksum value for 'Agentic AI'") # Corrected hardcoded value
+ 
+     def test_get_barcode_pattern_structure(self):
+         """Tests the structural integrity of the generated raw barcode pattern."""
+@@ -337,10 +354,10 @@
+         expected_content_length = 2 + len(test_pattern) + 2
+         
+         # Remove ANSI codes for length check
+-        first_line_no_ansi = lines[0].replace(_ANSI_WHITE_BG, '').replace(_ANSI_BLACK_FG, '').replace(_ANSI_RESET, '')
++        first_line_no_ansi = lines[0].replace(_ANSI_WHITE_BG, '').replace(_ANSI_BLACK_FG, '').replace(_ANSI_RESET, '').replace(_SPACE_CHAR, '') # Remove spaces for accurate content length
+         self.assert_equals(len(first_line_no_ansi), expected_content_length, "Rendered barcode line length (excluding ANSI codes)")
+         
+-        if _USE_ANSI_COLORS:
+-            self.assert_true(_ANSI_WHITE_BG in lines[0] and _ANSI_BLACK_FG in lines[0] and _ANSI_RESET in lines[0],
++        if _USE_ANSI_COLORS: # Check for ANSI codes in the first line
++            self.assert_true(_ANSI_WHITE_BG in lines[0] and _ANSI_BLACK_FG in lines[0] and _ANSI_RESET in lines[0],
+                              "Rendered barcode line contains ANSI escape codes")
+         else:
+             self.assert_true(_ANSI_WHITE_BG not in lines[0] and _ANSI_BLACK_FG not in lines[0] and _ANSI_RESET not in lines[0],
+@@ -395,7 +412,6 @@
+             if not raw_pattern_str:
+                 return widths
+             
+-            current_char = raw_pattern_str[0] # Initialize with the first character
+             current_char = raw_pattern_str[0]
+             current_width = 0
+             for char in raw_pattern_str:
+@@ -457,105 +473,3 @@
+ 
+ if __name__ == "__main__":
+     main()
+-
+-for value, pattern in _CODE_128_PATTERNS.items():
+-    if 0 <= value <= 95 or value in [_START_CODE_B_VALUE, _STOP_CODE_VALUE]: # Prioritize data chars and start/stop
+-        _PATTERN_TO_CODE_128_VALUE[pattern] = value
+-
+-# Then, add function codes (96-102) only if their pattern is not already mapped
+-# This ensures data characters take precedence if patterns are shared.
+-for value in range(96, 103):
+-    pattern = _CODE_128_PATTERNS[value]
+-    if pattern not in _PATTERN_TO_CODE_128_VALUE:
+-        _PATTERN_TO_CODE_128_VALUE[pattern] = value
+-
+-# --- Rendering Constants ---
+-_BARCODE_HEIGHT = 12
+-_QUIET_ZONE_WIDTH = 10 # In modules, rendered as spaces.
+-_BAR_CHAR = '█'
+-_SPACE_CHAR = ' '
+-
+-# ANSI escape codes for black on white background
+-_ANSI_WHITE_BG = '\033[47m' # White background
+-_ANSI_BLACK_FG = '\033[30m' # Black foreground
+-_ANSI_RESET = '\033[0m'    # Reset to default
+-
+-# Determine if ANSI colors should be used (e.g., if stdout is a TTY)
+-_USE_ANSI_COLORS = sys.stdout.isatty()
+-
+-# --- Program Architecture ---
+-
+-# 1. Encoding Logic
+-def encode_string(input_str: str) -> list[int]:
+-    """ 
+-    Encodes an input string into a list of Code 128-B values.
+-    Handles unsupported characters and calculates the checksum.
+-    If input is empty or whitespace, it defaults to "Agentic AI".
+-    """
+-    original_input = input_str
+-    if not input_str.strip():
+-        print("Warning: Input string is empty or whitespace. Defaulting to 'Agentic AI'.")
+-        input_str = "Agentic AI"
+-    
+-    if len(input_str) > _MAX_INPUT_LENGTH:
+-        print(f"Warning: Input string too long ({len(input_str)} chars). Truncating to {_MAX_INPUT_LENGTH} characters.")
+-        input_str = input_str[:_MAX_INPUT_LENGTH]
+-
+-    encoded_values = []
+-    for char in input_str:
+-        if char in _CODE_128_B_CHAR_TO_VALUE:
+-            encoded_values.append(_CODE_128_B_CHAR_TO_VALUE[char])
+-        else:
+-            print(f"Warning: Character '{repr(char)}' (ASCII {ord(char)}) not supported by Code 128-B. Skipping.")
+-
+-    # If all characters were unsupported, and original input was not default, default to "Agentic AI"
+-    if not encoded_values and original_input.strip():
+-        print("Error: No valid characters to encode after filtering. Defaulting to 'Agentic AI'.")
+-        input_str = "Agentic AI"
+-        encoded_values = [_CODE_128_B_CHAR_TO_VALUE[char] for char in input_str]
+-
+-    # Add Start Code B
+-    barcode_values = [_START_CODE_B_VALUE] + encoded_values
+-
+-    # Calculate checksum.
+-    # Checksum = (Start Code Value + (Value1 * 1) + (Value2 * 2) + ... + (ValueN * N)) % 103
+-    checksum_sum = _START_CODE_B_VALUE
+-    for i, value in enumerate(encoded_values):
+-        checksum_sum += (value * (i + 1))
+-    checksum_value = checksum_sum % 103
+-    barcode_values.append(checksum_value)
+-
+-    # Add Stop Code
+-    barcode_values.append(_STOP_CODE_VALUE)
+-
+-    return barcode_values
+-
+-# 2. Barcode Pattern Generation
+-def get_barcode_pattern(barcode_values: list[int]) -> str:
+-    """
+-    Converts a list of Code 128 values into a raw ASCII pattern string
+-    using '█' for bars and ' ' for spaces.
+-    """
+-    raw_pattern_segments = []
+-    for value in barcode_values:
+-        if value == _STOP_CODE_VALUE:
+-            # Stop character has an additional 2-module termination bar.
+-            pattern_tuple = _CODE_128_PATTERNS[value]
+-            for i, width in enumerate(pattern_tuple):
+-                if i % 2 == 0: # Bar
+-                    raw_pattern_segments.append(_BAR_CHAR * width)
+-                else: # Space
+-                    raw_pattern_segments.append(_SPACE_CHAR * width)
+-            raw_pattern_segments.append(_BAR_CHAR * 2) # Termination bar
+-        elif value in _CODE_128_PATTERNS:
+-            pattern_tuple = _CODE_128_PATTERNS[value]
+-            for i, width in enumerate(pattern_tuple):
+-                if i % 2 == 0: # Bar
+-                    raw_pattern_segments.append(_BAR_CHAR * width)
+-                else: # Space
+-                    raw_pattern_segments.append(_SPACE_CHAR * width)
+-        else:
+-            # This should ideally not happen if encode_string is correct
+-            print(f"Error: Unknown barcode value {value}. Skipping pattern generation for this value.")
+-    return "".join(raw_pattern_segments)
+-
+-# 3. ASCII Terminal Rendering
+-def render_barcode(raw_pattern: str, height: int, quiet_zone_width: int) -> str:
+-    """
+-    Renders the raw barcode pattern to a terminal-friendly string
+-    with ANSI escape sequences for black on white, quiet zones, and specified height.
+-    """
+-    quiet_zone_str = _SPACE_CHAR * quiet_zone_width
+-
+-    if _USE_ANSI_COLORS:
+-        # Apply ANSI colors to the quiet zones and the barcode pattern.
+-        # The quiet zones are white background, black foreground (which means black text on white background,
+-        # but since it's spaces, it will appear as white space).
+-        # The barcode itself will be black bars on white background.
+-        colored_pattern_line = (
+-            _ANSI_WHITE_BG + _ANSI_BLACK_FG + quiet_zone_str +
+-            raw_pattern +
+-            quiet_zone_str + _ANSI_RESET
+-        )
+-    else:
+-        # Fallback to plain ASCII without colors
+-        colored_pattern_line = quiet_zone_str + raw_pattern + quiet_zone_str
+-    # Repeat the pattern for the specified height
+-    rendered_output = "\n".join([colored_pattern_line] * height)
+-    return rendered_output
+-
+-# 4. Unit Testing Framework
+-class BarcodeTest:
+-    """A simple unit testing class for barcode generation and rendering."""
+-    def __init__(self):
+-        self.passed_tests = 0
+-        self.failed_tests = 0
+-
+-    def assert_equals(self, actual, expected, message=""):
+-        """Asserts that two values are equal."""
+-        if actual == expected:
+-            self.passed_tests += 1
+-            # print(f"PASS: {message}") # Uncomment for verbose pass messages
+-        else:
+-            self.failed_tests += 1
+-            print(f"FAIL: {message} - Expected: {expected}, Got: {actual}")
+-
+-    def assert_true(self, condition, message=""):
+-        """Asserts that a condition is true."""
+-        if condition:
+-            self.passed_tests += 1
+-            # print(f"PASS: {message}")
+-        else:
+-            self.failed_tests += 1
+-            print(f"FAIL: {message} - Condition was false.")
+-
+-    def run_all_tests(self):
+-        """Runs all defined unit tests and prints a summary."""
+-        print("\n--- Running Unit Tests ---")
+-        self.test_encode_string_default()
+-        self.test_encode_string_custom()
+-        self.test_encode_string_unsupported_chars()
+-        self.test_encode_string_empty_whitespace()
+-        self.test_checksum_calculation()
+-        self.test_get_barcode_pattern_structure()
+-        self.test_render_barcode_dimensions()
+-        self.test_encode_string_truncation()
+-        self.test_encode_string_all_unsupported_fallback()
+-        self.test_simulated_decodability()
+-        print(f"\n--- Test Summary ---")
+-        print(f"Total tests: {self.passed_tests + self.failed_tests}")
+-        print(f"Passed: {self.passed_tests}")
+-        if self.failed_tests > 0:
+-            print(f"Failed: {self.failed_tests}")
+-            print("Some tests failed!")
+-            sys.exit(1)
+-        else:
+-            print("All tests passed!")
+-
+-    def test_encode_string_default(self):
+-        """Tests encoding with the default input string 'Agentic AI'."""
+-        print("Test: Default input string 'Agentic AI'")
+-        values = encode_string("") # Should trigger default
+-        expected_chars = "Agentic AI"
+-        expected_values = [_CODE_128_B_CHAR_TO_VALUE[c] for c in expected_chars] # Data values
+-        self.assert_true(len(values) == len(expected_values) + 3, 
+-                         f"Length of encoded values (default): {len(values)} vs {len(expected_values) + 3}") # Start, Data, Checksum, Stop        
+-        self.assert_equals(values[0], _START_CODE_B_VALUE, "Start code for default")
+-        self.assert_equals(values[-1], _STOP_CODE_VALUE, "Stop code for default")
+-        self.assert_equals(values[1:-2], expected_values, "Data values for default")
+-
+-    def test_encode_string_custom(self):
+-        """Tests encoding with a custom input string."""
+-        print("Test: Custom input string 'HELLO123'")
+-        input_str = "HELLO123"
+-        values = encode_string(input_str)
+-        expected_values = [_CODE_128_B_CHAR_TO_VALUE[c] for c in input_str]
+-        self.assert_true(len(values) == len(expected_values) + 3, f"Length of encoded values (custom): {len(values)} vs {len(expected_values) + 3}")
+-        self.assert_equals(values[0], _START_CODE_B_VALUE, "Start code for custom")
+-        self.assert_equals(values[-1], _STOP_CODE_VALUE, "Stop code for custom")
+-        self.assert_equals(values[1:-2], expected_values, "Data values for custom")
+-
+-    def test_encode_string_unsupported_chars(self):
+-        """Tests encoding with a string containing unsupported characters."""
+-        print("Test: Input string with unsupported characters 'Hello\x01World'")
+-        # \x01 is a control character, not in ASCII 32-127
+-        input_str = "Hello\x01World"
+-        values = encode_string(input_str) # Should filter out \x01, and print a warning
+-        expected_values = [_CODE_128_B_CHAR_TO_VALUE[c] for c in "HelloWorld"] # Data values
+-        self.assert_true(len(values) == len(expected_values) + 3, "Length of encoded values (unsupported chars)") # Start, Data, Checksum, Stop
+-        self.assert_equals(values[1:-2], expected_values, "Data values (unsupported chars ignored)")
+-
+-    def test_encode_string_empty_whitespace(self):
+-        """Tests encoding with empty or whitespace-only input strings."""
+-        print("Test: Empty or whitespace input string")
+-        values_empty = encode_string("")
+-        values_whitespace = encode_string("   \t\n")
+-        expected_chars = "Agentic AI"
+-        expected_values = [_CODE_128_B_CHAR_TO_VALUE[c] for c in expected_chars]
+-        self.assert_equals(values_empty[1:-2], expected_values, "Empty string defaults to 'Agentic AI'")
+-        self.assert_equals(values_whitespace[1:-2], expected_values, "Whitespace string defaults to 'Agentic AI'")
+-
+-    def test_checksum_calculation(self):
+-        """Tests the checksum calculation for a known input string."""
+-        print("Test: Checksum calculation for 'Agentic AI'")
+-        # "Agentic AI" -> values for A, g, e, n, t, i, c,  , A, I
+-        # A=33, g=71, e=69, n=78, t=84, i=73, c=67,  =0, A=33, I=41
+-        # Start B = 104
+-        # Checksum = (104 + (33*1) + (71*2) + (69*3) + (78*4) + (84*5) + (73*6) + (67*7) + (0*8) + (33*9) + (41*10)) % 103
+-        # Checksum = (104 + 33 + 142 + 207 + 312 + 420 + 438 + 469 + 0 + 297 + 410) % 103
+-        # Checksum = 2832 % 103 = 55
+-        input_str = "Agentic AI"
+-        encoded_values = [_CODE_128_B_CHAR_TO_VALUE[c] for c in input_str]
+-        
+-        checksum_sum = _START_CODE_B_VALUE
+-        for i, value in enumerate(encoded_values):
+-            checksum_sum += (value * (i + 1))
+-        calculated_checksum = checksum_sum % 103
+-
+-        values_with_checksum = encode_string(input_str)
+-        self.assert_equals(values_with_checksum[-2], calculated_checksum, f"Checksum for '{input_str}' (calculated)") # Should be 51
+-        self.assert_equals(values_with_checksum[-2], 51, "Known checksum value for 'Agentic AI'") # Corrected hardcoded value
+-
+-    def test_get_barcode_pattern_structure(self):
+-        """Tests the structural integrity of the generated raw barcode pattern."""
+-        print("Test: Barcode pattern structure for 'A'")
+-        # Example sequence: Start B (104), A (33), Checksum (e.g., 55), Stop (106)
+-        test_values = [_START_CODE_B_VALUE, _CODE_128_B_CHAR_TO_VALUE['A'], 55, _STOP_CODE_VALUE]
+-        raw_pattern = get_barcode_pattern(test_values)
+-
+-        # Calculate expected total modules
+-        expected_total_modules = 0
+-        for val in test_values:
+-            if val == _STOP_CODE_VALUE:
+-                expected_total_modules += sum(_CODE_128_PATTERNS[val]) + 2 # Stop code + termination bar
+-            else:
+-                expected_total_modules += sum(_CODE_128_PATTERNS[val]) # Standard 6-element pattern
+-        
+-        self.assert_equals(len(raw_pattern), expected_total_modules, "Raw pattern length for 'A' sequence")
+-        self.assert_true(all(c in (_BAR_CHAR, _SPACE_CHAR) for c in raw_pattern), "Raw pattern contains only valid chars")
+-
+-    def test_render_barcode_dimensions(self):
+-        """Tests the dimensions and ANSI escape code presence in the rendered barcode."""
+-        print("Test: Rendered barcode dimensions and ANSI codes")
+-        test_pattern = "█ █" # A short pattern for testing
+-        rendered = render_barcode(test_pattern, 5, 2) # Height 5, quiet zone 2
+-        lines = rendered.strip().split('\n')
+-        self.assert_equals(len(lines), 5, "Rendered barcode height")
+-        
+-        # Expected line length (excluding ANSI codes): 2 (local quiet_zone_width) + len(test_pattern) + 2 (local quiet_zone_width)
+-        expected_content_length = 2 + len(test_pattern) + 2
+-        
+-        # Remove ANSI codes for length check
+-        first_line_no_ansi = lines[0].replace(_ANSI_WHITE_BG, '').replace(_ANSI_BLACK_FG, '').replace(_ANSI_RESET, '')
+-        self.assert_equals(len(first_line_no_ansi), expected_content_length, "Rendered barcode line length (excluding ANSI codes)")
+-        
+-        if _USE_ANSI_COLORS:
+-            self.assert_true(_ANSI_WHITE_BG in lines and _ANSI_BLACK_FG in lines and _ANSI_RESET in lines,
+-                             "Rendered barcode line contains ANSI escape codes")
+-        else:
+-            self.assert_true(_ANSI_WHITE_BG not in lines and _ANSI_BLACK_FG not in lines and _ANSI_RESET not in lines,
+-                             "Rendered barcode line does not contain ANSI escape codes when disabled")
+-
+-    def test_encode_string_truncation(self):
+-        """Tests that excessively long input strings are truncated."""
+-        print(f"Test: Input string truncation (>{_MAX_INPUT_LENGTH} chars)")
+-        long_string = "A" * (_MAX_INPUT_LENGTH + 10) # 90 'A's
+-        values = encode_string(long_string)
+-        expected_chars = "A" * _MAX_INPUT_LENGTH
+-        expected_values = [_CODE_128_B_CHAR_TO_VALUE[c] for c in expected_chars]
+-        self.assert_equals(len(values[1:-2]), len(expected_values), "Truncated string length")
+-        self.assert_equals(values[1:-2], expected_values, "Truncated string content")
+-
+-    def test_encode_string_all_unsupported_fallback(self):
+-        """Tests fallback to 'Agentic AI' when input contains only unsupported characters."""
+-        print("Test: All unsupported characters fallback")
+-        unsupported_str = "\x01\x02\x03" # Only control characters
+-        values = encode_string(unsupported_str)
+-        expected_chars = "Agentic AI"
+-        expected_values = [_CODE_128_B_CHAR_TO_VALUE[c] for c in expected_chars]
+-        self.assert_equals(values[1:-2], expected_values, "Fallback to 'Agentic AI' for all unsupported chars")
+-
+-    def test_encode_string_boundary_chars(self):
+-        """Tests encoding of boundary ASCII characters: Space (32) and DEL (127)."""
+-        print("Test: Encoding boundary characters (Space and DEL)")
+-        input_str = " Hello World! " + chr(127) # Space at start/end, DEL
+-        values = encode_string(input_str)
+-        
+-        expected_chars = " Hello World! " + chr(127)
+-        expected_values = [_CODE_128_B_CHAR_TO_VALUE[c] for c in expected_chars]
+-        
+-        self.assert_equals(values[1:-2], expected_values, "Boundary characters encoded correctly")
+-        self.assert_equals(values[0], _START_CODE_B_VALUE, "Start code for boundary chars")
+-        self.assert_equals(values[-1], _STOP_CODE_VALUE, "Stop code for boundary chars")
+-        
+-        # Test just DEL
+-        input_del = chr(127)
+-        values_del = encode_string(input_del)
+-        expected_values_del = [_CODE_128_B_CHAR_TO_VALUE[chr(127)]]
+-        self.assert_equals(values_del[1:-2], expected_values_del, "Only DEL character encoded correctly")
+-
+-    def test_simulated_decodability(self):
+-        """
+-        Tests simulated decodability by parsing a generated raw pattern back into
+-        its original sequence of Code 128 values.
+-        """
+-        print("Test: Simulated decodability (pattern to values)")
+-        def _parse_raw_pattern_to_module_widths(raw_pattern_str: str) -> list[int]:
+-            """Helper to convert raw pattern string ('█', ' ') into a list of module widths."""
+-            widths = []
+-            if not raw_pattern_str:
+-                return widths
+-            
+-            current_char = raw_pattern_str # Initialize with the first character
+-            current_char = raw_pattern_str[0]
+-            current_width = 0 # Initialize width for the first character
+-            for char in raw_pattern_str:
+-                if char == current_char:
+-                    current_width += 1
+-                else:
+-                    widths.append(current_width)
+-                    current_char = char
+-                    current_width = 1
+-            widths.append(current_width) # Add the last segment
+-            return widths
+-
+-        test_string_for_decode = "Agentic AI 123" # A more complex string for robust testing
+-        original_encoded_values = encode_string(test_string_for_decode)
+-        generated_raw_pattern = get_barcode_pattern(original_encoded_values)
+-
+-        parsed_module_widths = _parse_raw_pattern_to_module_widths(generated_raw_pattern)
+-
+-        decoded_values = []
+-        idx = 0
+-        while idx < len(parsed_module_widths):
+-            # Check for Stop Code (6 pattern elements + 2-module termination bar = 7 elements total)
+-            if idx + 7 <= len(parsed_module_widths):
+-                potential_stop_pattern = tuple(parsed_module_widths[idx : idx + 6])
+-                if potential_stop_pattern == _CODE_128_PATTERNS[_STOP_CODE_VALUE] and parsed_module_widths[idx + 6] == 2:
+-                    decoded_values.append(_STOP_CODE_VALUE)
+-                    idx += 7
+-                    continue
+-
+-            # Check for standard 6-element patterns
+-            if idx + 6 <= len(parsed_module_widths):
+-                current_pattern_tuple = tuple(parsed_module_widths[idx : idx + 6])
+-                
+-                # Use the reverse mapping for efficient lookup
+-                found_value = _PATTERN_TO_CODE_128_VALUE.get(current_pattern_tuple)
+-                
+-                if found_value is not None:
+-                    decoded_values.append(found_value)
+-                    idx += 6
+-                else:
+-                    # Unrecognized pattern, something is wrong with encoding or parsing
+-                    self.failed_tests += 1
+-                    print(f"FAIL: Simulated decodability - Unrecognized 6-element pattern at index {idx}: {current_pattern_tuple}")
+-                    return # Exit test early on failure
+-            else:
+-                # Remaining modules are too short for a full pattern, indicates an error or end of barcode
+-                break
+-        
+-        self.assert_equals(decoded_values, original_encoded_values, "Simulated decodability: decoded values match original")
+-
+-
+-# --- Main Execution Logic ---
+-def main():
+-    """
+-    Main function to parse arguments, generate, display, and optionally test the barcode.
+-    """
+-    parser = argparse.ArgumentParser(
+-        description="Generate and display Code 128-B barcodes in ASCII to the terminal.",
+-        formatter_class=argparse.RawTextHelpFormatter # Preserve formatting for description
+-    )
+-    parser.add_argument("input_string", nargs='?', default="Agentic AI",
+-                        help="The string to encode into a Code 128-B barcode.\n"
+-                             "Defaults to 'Agentic AI' if not provided or empty/whitespace.\n"
+-                             "Supports ASCII characters from 32 (space) to 127 (DEL).")
+-    parser.add_argument("--test", action="store_true",
+-                        help="Run a comprehensive suite of unit tests after displaying the barcode.\n"
+-                             "Includes tests for encoding, rendering, input handling, and simulated decodability.")
+-
+-    args = parser.parse_args()
+-
+-    # Force ANSI colors if in test mode and not a TTY, to allow testing ANSI rendering
+-    if args.test and not sys.stdout.isatty():
+-        global _USE_ANSI_COLORS
+-        _USE_ANSI_COLORS = True
+-        print("Note: Forcing ANSI colors for test mode as stdout is not a TTY.")
+-    input_to_encode = args.input_string
+-
+-    # Generate and display the barcode
+-    print("Generating Code 128-B barcode...")
+-    barcode_values = encode_string(input_to_encode)
+-    raw_pattern = get_barcode_pattern(barcode_values)
+-    rendered_barcode = render_barcode(raw_pattern, _BARCODE_HEIGHT, _QUIET_ZONE_WIDTH)
+-    if _USE_ANSI_COLORS:
+-        print(rendered_barcode)
+-    else:
+-        print("Warning: ANSI escape codes not supported or disabled. Rendering plain ASCII.\n" + rendered_barcode)
+-
+-    if args.test:
+-        tester = BarcodeTest()
+-        tester.run_all_tests()
+-
+-if __name__ == "__main__":
+-    main()

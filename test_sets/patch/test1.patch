@@ -1,0 +1,1278 @@
+--- a/main.py
++++ b/main.py
+@@ -107,8 +107,7 @@
+                 elif token_value == 'true' or token_value == 'false':
+                     token_type = 'BOOLEAN'
+                 else: # Convert keywords like 'if', 'else' to their uppercase type
+-                    token_type = token_value.upper()
+-            elif token_type == 'IDENTIFIER' and token_value in self.KEYWORDS:
++                    token_type = token_value.upper() # e.g., IF, ELSE, WHILE, RETURN, PRINT, etc.
+                  token_type = token_value.upper() # e.g., IF, ELSE, WHILE
+ 
+             self.tokens.append(Token(token_type, token_value, token_line, token_column))
+@@ -165,6 +164,15 @@
+     def __repr__(self):
+         return f"FunctionCall(name={self.name}, args={len(self.arguments)})"
+ 
++class BlockStatement(ASTNode): # New AST node for anonymous blocks
++    def __init__(self, statements, token=None):
++        super().__init__(token)
++        self.statements = statements
++
++    def __repr__(self):
++        return f"BlockStatement({len(self.statements)} stmts)"
++
++
+ class ReturnStatement(Statement):
+     def __init__(self, return_token, expr=None):
+         super().__init__(return_token)
+@@ -252,11 +260,11 @@
+                 return func_call
+             else:
+                 raise SyntaxError(
+-                    f"Unexpected token after identifier: {peek_token.type}",
++                    f"Expected assignment or function call after identifier, got {peek_token.type}",
+                     peek_token.line, peek_token.column
+                 )
+         elif self.current_token.type == 'LBRACE': # Anonymous block scope
+-            self._eat('LBRACE')
++            lbrace_token = self._eat('LBRACE') # Capture token for line/column
+             statements = self._block_statements()
+             self._eat('RBRACE')
+-            return Program(statements) # Treat as a mini-program block for execution
++            return BlockStatement(statements, lbrace_token) # Use new BlockStatement
+         else:
+             raise SyntaxError(
+                 f"Unexpected token: {self.current_token.type}",
+@@ -398,9 +406,86 @@
+             )
+ 
+ # --- Type Checker (Skeleton) ---
+-# --- Type Checker ---
++# --- Type Checker ---
+ class TypeChecker:
+     def __init__(self):
+-        self.symbol_table = {} # Global scope for now
++        self.symbol_table_stack = [] # Stack of dicts for scopes: {'var_name': 'type_name'}
++        self.function_signatures = {} # {'func_name': {'return_type': 'type', 'params': [('type', 'name'), ...]}}
++        self.current_function_return_type = None # To check return statements
++        self._enter_scope() # Initialize global scope
++
++    def _enter_scope(self):
++        self.symbol_table_stack.append({})
++
++    def _exit_scope(self):
++        if len(self.symbol_table_stack) > 1: # Don't pop global scope
++            self.symbol_table_stack.pop()
++
++    def _define_variable(self, name, type_name, node):
++        current_scope = self.symbol_table_stack[-1]
++        if name in current_scope:
++            raise TypeError(f"Variable '{name}' already defined in this scope.", node.line, node.column)
++        current_scope[name] = type_name
++
++    def _get_variable_type(self, name, node):
++        for scope in reversed(self.symbol_table_stack):
++            if name in scope:
++                return scope[name]
++        raise TypeError(f"Undefined variable '{name}'.", node.line, node.column)
++
++    def check(self, ast):
++        # First pass: Register function signatures
++        for stmt in ast.statements:
++            if isinstance(stmt, FunctionDecl):
++                if stmt.name in self.function_signatures:
++                    raise TypeError(f"Function '{stmt.name}' already defined.", stmt.line, stmt.column)
++                params_sig = [(p_type.value, p_id.value) for p_type, p_id in stmt.parameters]
++                self.function_signatures[stmt.name] = {
++                    'return_type': stmt.return_type,
++                    'params': params_sig
++                }
++        # Define built-in functions for type checking
++        self.function_signatures['print'] = {'return_type': 'void', 'params': [('any', 'arg')]} # 'any' for print
++        self.function_signatures['read_int'] = {'return_type': 'int', 'params': []}
++        self.function_signatures['read_bool'] = {'return_type': 'bool', 'params': []}
++        self.function_signatures['read_str'] = {'return_type': 'string', 'params': []}
++
++        # Second pass: Type check all statements
++        for stmt in ast.statements:
++            self._check_statement(stmt)
++
++        self._exit_scope() # Exit global scope
++
++    def _check_statement(self, node):
++        if isinstance(node, VariableDecl):
++            if node.var_type not in Lexer.TYPES:
++                raise TypeError(f"Unknown type '{node.var_type}'.", node.line, node.column)
++            self._define_variable(node.name, node.var_type, node)
++            if node.expression:
++                expr_type = self._check_expression(node.expression)
++                if expr_type != node.var_type:
++                    raise TypeError(f"Type mismatch in variable declaration for '{node.name}': expected {node.var_type}, got {expr_type}.", node.line, node.column)
++        elif isinstance(node, Assignment):
++            var_type = self._get_variable_type(node.name, node)
++            expr_type = self._check_expression(node.expression)
++            if var_type != expr_type:
++                raise TypeError(f"Type mismatch in assignment for '{node.name}': expected {var_type}, got {expr_type}.", node.line, node.column)
++        elif isinstance(node, PrintStatement):
++            self._check_expression(node.expression) # print can take any type, so just check expr validity
++        elif isinstance(node, IfStatement):
++            condition_type = self._check_expression(node.condition)
++            if condition_type != 'bool':
++                raise TypeError("If condition must be of type 'bool'.", node.line, node.column)
++            self._enter_scope()
++            for stmt in node.true_block: self._check_statement(stmt)
++            self._exit_scope()
++            if node.else_block:
++                self._enter_scope()
++                for stmt in node.else_block: self._check_statement(stmt)
++                self._exit_scope()
++        elif isinstance(node, WhileLoop):
++            condition_type = self._check_expression(node.condition)
++            if condition_type != 'bool':
++                raise TypeError("While loop condition must be of type 'bool'.", node.line, node.column)
++            self._enter_scope()
++            for stmt in node.body: self._check_statement(stmt)
++            self._exit_scope()
++        elif isinstance(node, ForLoop):
++            self._enter_scope()
++            if node.init:
++                self._check_statement(node.init) # Init can be VarDecl or Assignment
++            condition_type = self._check_expression(node.condition)
++            if condition_type != 'bool':
++                raise TypeError("For loop condition must be of type 'bool'.", node.line, node.column)
++            if node.increment:
++                if isinstance(node.increment, Assignment):
++                    self._check_statement(node.increment)
++                elif isinstance(node.increment, FunctionCall):
++                    self._check_expression(node.increment) # Just check its validity, return type doesn't matter
++                else:
++                    raise TypeError("Invalid increment statement in for loop.", node.increment.line, node.increment.column)
++            for stmt in node.body: self._check_statement(stmt)
++            self._exit_scope()
++        elif isinstance(node, FunctionDecl):
++            # Signature already registered in first pass
++            previous_return_type = self.current_function_return_type
++            self.current_function_return_type = node.return_type
++
++            self._enter_scope()
++            for param_type_token, param_id_token in node.parameters:
++                self._define_variable(param_id_token.value, param_type_token.value, param_id_token)
++            
++            for stmt in node.body: self._check_statement(stmt)
++            
++            self._exit_scope()
++            self.current_function_return_type = previous_return_type # Restore
++        elif isinstance(node, FunctionCall):
++            self._check_expression(node) # Function calls can be statements if they return void or their return value is ignored
++        elif isinstance(node, ReturnStatement):
++            if self.current_function_return_type is None:
++                raise TypeError("Return statement outside of a function.", node.line, node.column)
++            
++            if node.expression:
++                expr_type = self._check_expression(node.expression)
++                if self.current_function_return_type == 'void':
++                    raise TypeError(f"Void function cannot return a value, but returned '{expr_type}'.", node.line, node.column)
++                if expr_type != self.current_function_return_type:
++                    raise TypeError(f"Return type mismatch: expected {self.current_function_return_type}, got {expr_type}.", node.line, node.column)
++            else: # No expression
++                if self.current_function_return_type != 'void':
++                    raise TypeError(f"Function declared to return '{self.current_function_return_type}' but returned nothing.", node.line, node.column)
++        elif isinstance(node, BlockStatement): # Handle new BlockStatement node
++            self._enter_scope()
++            for stmt in node.statements: self._check_statement(stmt)
++            self._exit_scope()
++        # Program node (top-level) is handled by the loop in check()
++
++    def _check_expression(self, node):
++        if isinstance(node, Literal):
++            return node.type_name
++        elif isinstance(node, Identifier):
++            return self._get_variable_type(node.name, node)
++        elif isinstance(node, BinaryOp):
++            left_type = self._check_expression(node.left)
++            right_type = self._check_expression(node.right)
++            op = node.op
++
++            if op in ('+', '-', '*', '/', '%'):
++                if left_type == 'int' and right_type == 'int':
++                    return 'int'
++                if op == '+' and left_type == 'string' and right_type == 'string':
++                    return 'string'
++                raise TypeError(f"Unsupported operand types for '{op}': {left_type} and {right_type}.", node.line, node.column)
++            elif op in ('==', '!='):
++                if left_type != right_type:
++                    raise TypeError(f"Incompatible types for equality comparison '{op}': {left_type} and {right_type}.", node.line, node.column)
++                return 'bool'
++            elif op in ('<', '>', '<=', '>='):
++                if left_type == 'int' and right_type == 'int':
++                    return 'bool'
++                raise TypeError(f"Comparison operator '{op}' only supported for integers, got {left_type} and {right_type}.", node.line, node.column)
++            elif op in ('&&', '||'):
++                if left_type == 'bool' and right_type == 'bool':
++                    return 'bool'
++                raise TypeError(f"Operands for '{op}' must be booleans, got {left_type} and {right_type}.", node.line, node.column)
++            else:
++                raise TypeError(f"Unknown binary operator: {op}", node.line, node.column)
++        elif isinstance(node, UnaryOp):
++            right_type = self._check_expression(node.right)
++            op = node.op
++            if op == '-':
++                if right_type == 'int':
++                    return 'int'
++                raise TypeError(f"Unsupported operand type for unary '-': {right_type}.", node.line, node.column)
++            elif op == '!':
++                if right_type == 'bool':
++                    return 'bool'
++                raise TypeError(f"Unsupported operand type for unary '!': {right_type}.", node.line, node.column)
++            else:
++                raise TypeError(f"Unknown unary operator: {op}", node.line, node.column)
++        elif isinstance(node, FunctionCall):
++            func_name = node.name
++            if func_name not in self.function_signatures:
++                raise TypeError(f"Undefined function '{func_name}'.", node.line, node.column)
++            
++            func_sig = self.function_signatures[func_name]
++            if len(node.arguments) != len(func_sig['params']):
++                raise TypeError(f"Function '{func_name}' expects {len(func_sig['params'])} arguments, but got {len(node.arguments)}.", node.line, node.column)
++            
++            for i, (param_type_str, _) in enumerate(func_sig['params']):
++                arg_expr_type = self._check_expression(node.arguments[i])
++                if param_type_str == 'any': # For print, allow any type
++                    continue
++                if arg_expr_type != param_type_str:
++                    raise TypeError(f"Type mismatch for argument {i+1} in function '{func_name}': expected {param_type_str}, got {arg_expr_type}.", node.arguments[i].line, node.arguments[i].column)
++            
++            return func_sig['return_type']
++        else:
++            raise TypeError(f"Unknown expression type during type checking: {type(node).__name__}", node.line, node.column)
++
++# --- Interpreter ---
++class SymbolTable:
++    def __init__(self, parent=None):
++        self.symbols = {} # Stores {name: value}
+         self.current_function_return_type = None
+ 
+     def check(self, ast):
+@@ -512,9 +597,18 @@
+ 
+             op = node.op
+             if op == '+':
+-                if isinstance(left_val, int) and isinstance(right_val, int):
+-                    return left_val + right_val
+-                if isinstance(left_val, str) and isinstance(right_val, str):
++                if not ((isinstance(left_val, int) and isinstance(right_val, int)) or
++                        (isinstance(left_val, str) and isinstance(right_val, str))):
++                    raise RuntimeError(f"Unsupported operand types for +: {self.current_scope._get_runtime_type(left_val)} and {self.current_scope._get_runtime_type(right_val)}", node.line, node.column)
++                return left_val + right_val
++            elif op == '-':
++                if not (isinstance(left_val, int) and isinstance(right_val, int)):
++                    raise RuntimeError(f"Unsupported operand types for -: {self.current_scope._get_runtime_type(left_val)} and {self.current_scope._get_runtime_type(right_val)}", node.line, node.column)
++                return left_val - right_val
++            elif op == '*':
++                if not (isinstance(left_val, int) and isinstance(right_val, int)):
++                    raise RuntimeError(f"Unsupported operand types for *: {self.current_scope._get_runtime_type(left_val)} and {self.current_scope._get_runtime_type(right_val)}", node.line, node.column)
++                return left_val * right_val
++            elif op == '/':
++                if not (isinstance(left_val, int) and isinstance(right_val, int)):
++                    raise RuntimeError(f"Unsupported operand types for /: {self.current_scope._get_runtime_type(left_val)} and {self.current_scope._get_runtime_type(right_val)}", node.line, node.column)
++                if right_val == 0:
++                    raise RuntimeError("Division by zero", node.line, node.column)
++                return left_val // right_val # Integer division
++            elif op == '%':
++                if not (isinstance(left_val, int) and isinstance(right_val, int)):
++                    raise RuntimeError(f"Unsupported operand types for %: {self.current_scope._get_runtime_type(left_val)} and {self.current_scope._get_runtime_type(right_val)}", node.line, node.column)
++                if right_val == 0:
++                    raise RuntimeError("Modulo by zero", node.line, node.column)
++                return left_val % right_val
++            elif op in ('==', '!='):
++                if type(left_val) != type(right_val):
++                    raise RuntimeError(f"Incompatible types for equality comparison '{op}': {self.current_scope._get_runtime_type(left_val)} and {self.current_scope._get_runtime_type(right_val)}", node.line, node.column)
++                if op == '==': return left_val == right_val
++                if op == '!=': return left_val != right_val
++            elif op in ('<', '>', '<=', '>='):
++                if not (isinstance(left_val, int) and isinstance(right_val, int)):
++                    raise RuntimeError(f"Comparison operator '{op}' only supported for integers, got {self.current_scope._get_runtime_type(left_val)} and {self.current_scope._get_runtime_type(right_val)}", node.line, node.column)
++                if op == '<':  return left_val < right_val
++                if op == '>':  return left_val > right_val
++                if op == '<=': return left_val <= right_val
++                if op == '>=': return left_val >= right_val
++            elif op == '&&':
++                if not (isinstance(left_val, bool) and isinstance(right_val, bool)):
++                    raise RuntimeError("Operands for '&&' must be booleans.", node.line, node.column)
++                return left_val and right_val
++            elif op == '||':
++                if not (isinstance(left_val, bool) and isinstance(right_val, bool)):
++                    raise RuntimeError("Operands for '||' must be booleans.", node.line, node.column)
++                return left_val or right_val
++            else:
++                raise RuntimeError(f"Unknown binary operator: {op}", node.line, node.column)
++        elif isinstance(node, UnaryOp):
++            right_val = self._evaluate_expression(node.right)
++            op = node.op
++            if op == '-':
++                if not isinstance(right_val, int):
++                    raise RuntimeError(f"Unsupported operand type for unary -: {self.current_scope._get_runtime_type(right_val)}", node.line, node.column)
++                return -right_val
++            elif op == '!':
++                if not isinstance(right_val, bool):
++                    raise RuntimeError(f"Unsupported operand type for unary !: {self.current_scope._get_runtime_type(right_val)}", node.line, node.column)
++                return not right_val
++            else:
++                raise RuntimeError(f"Unknown unary operator: {op}", node.line, node.column)
++        elif isinstance(node, FunctionCall):
++            return self._call_function(node)
++        else:
++            raise RuntimeError(f"Unknown expression type: {type(node).__name__}", node.line, node.column)
++
++    def _call_function(self, node):
++        func_name = node.name
++        args = [self._evaluate_expression(arg_expr) for arg_expr in node.arguments]
++
++        # Handle built-in functions
++        if func_name == 'print':
++            if len(args) != 1:
++                raise RuntimeError("print() expects exactly one argument.", node.line, node.column)
++            self.output_buffer.append(str(args[0]).lower() if isinstance(args[0], bool) else str(args[0]) + "\n")
++            return None # print returns void
++        elif func_name == 'read_int':
++            if len(args) != 0:
++                raise RuntimeError("read_int() expects no arguments.", node.line, node.column)
++            if not self.input_queue:
++                raise RuntimeError("No input provided for read_int().", node.line, node.column)
++            val = self.input_queue.popleft()
++            if not isinstance(val, int):
++                raise RuntimeError(f"Expected int input for read_int(), got {type(val).__name__}.", node.line, node.column)
++            return val
++        elif func_name == 'read_bool':
++            if len(args) != 0:
++                raise RuntimeError("read_bool() expects no arguments.", node.line, node.column)
++            if not self.input_queue:
++                raise RuntimeError("No input provided for read_bool().", node.line, node.column)
++            val = self.input_queue.popleft()
++            if not isinstance(val, bool):
++                raise RuntimeError(f"Expected bool input for read_bool(), got {type(val).__name__}.", node.line, node.column)
++            return val
++        elif func_name == 'read_str':
++            if len(args) != 0:
++                raise RuntimeError("read_str() expects no arguments.", node.line, node.column)
++            if not self.input_queue:
++                raise RuntimeError("No input provided for read_str().", node.line, node.column)
++            val = self.input_queue.popleft()
++            if not isinstance(val, str):
++                raise RuntimeError(f"Expected string input for read_str(), got {type(val).__name__}.", node.line, node.column)
++            return val
++
++        # Handle user-defined functions
++        if func_name not in self.functions:
++            raise RuntimeError(f"Undefined function '{func_name}'", node.line, node.column)
++
++        func_decl = self.functions[func_name]
++        if len(args) != len(func_decl.parameters):
++            raise RuntimeError(f"Function '{func_name}' expects {len(func_decl.parameters)} arguments, but got {len(args)}.", node.line, node.column)
++
++        self._enter_scope()
++        # Bind parameters to arguments
++        for (param_type_token, param_id_token), arg_value in zip(func_decl.parameters, args):
++            # Basic type check for parameters
++            expected_type = param_type_token.value
++            actual_type = self.current_scope._get_runtime_type(arg_value)
++            if expected_type != actual_type:
++                raise RuntimeError(f"Type mismatch for parameter '{param_id_token.value}' in function '{func_name}': expected {expected_type}, got {actual_type}.", param_id_token.line, param_id_token.column)
++            self.current_scope.define(param_id_token.value, expected_type, arg_value)
++
++        return_value = None
++        try:
++            for stmt in func_decl.body:
++                self._execute_statement(stmt)
++        except ReturnValue as e:
++            return_value = e.value
++        finally:
++            self._exit_scope()
++
++        # Check return type (basic)
++        expected_return_type = func_decl.return_type
++        actual_return_type = self.current_scope._get_runtime_type(return_value)
++
++        if expected_return_type == 'void' and return_value is not None:
++            raise RuntimeError(f"Function '{func_name}' declared as 'void' but returned a value.", node.line, node.column)
++        if expected_return_type != 'void' and return_value is None:
++             raise RuntimeError(f"Function '{func_name}' declared to return '{expected_return_type}' but returned nothing.", node.line, node.column)
++        if expected_return_type != 'void' and expected_return_type != actual_return_type:
++            raise RuntimeError(f"Function '{func_name}' expected to return '{expected_return_type}', but returned '{actual_return_type}'.", node.line, node.column)
++
++        return return_value
++
++class ReturnValue(Exception):
++    """Special exception to propagate return values from functions."""
++    def __init__(self, value):
++        self.value = value
++
++# --- Main Interpreter Entry Point ---
++def interpreter_main(program_code: str, inputs: list = None) -> str:
++    """
++    Main entry point for the C-like language interpreter.
++
++    Args:
++        program_code (str): The multi-line text of the program.
++        inputs (list, optional): A list of inputs for read_int/bool/str calls.
++                                 Defaults to None, meaning real stdin will be used.
++
++    Returns:
++        str: The accumulated output of the program.
++    """
++    try:
++        lexer = Lexer(program_code)
++        tokens = lexer.get_tokens()
++
++        parser = Parser(tokens)
++        ast = parser.parse()
++
++        # Type checking
++        type_checker = TypeChecker()
++        type_checker.check(ast)
++
++        interpreter = Interpreter(ast, inputs)
++        output = interpreter.interpret()
++        return output
++    except InterpreterError as e:
++        return f"Error: {e}\n"
++    except Exception as e:
++        # Catch any unexpected Python errors during interpretation
++        return f"Unexpected Interpreter Error: {e}\n"
++
++# --- Test Programs ---
++TEST_PROGRAMS = [
++    {
++        "code": """
++            int main() {
++                print(10);
++                return 0;
++            }
++        """,
++        "description": "Basic print of an integer literal.",
++        "expected_output": "10\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 5;
++                int y = 10;
++                print(x + y);
++                return 0;
++            }
++        """,
++        "description": "Variable declaration, assignment, and arithmetic.",
++        "expected_output": "15\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                if (x > 5) {
++                    print("x is greater than 5");
++                } else {
++                    print("x is not greater than 5");
++                }
++                return 0;
++            }
++        """,
++        "description": "If-else statement with string literal.",
++        "expected_output": "x is greater than 5\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 3;
++                if (x == 5) {
++                    print("x is 5");
++                } else if (x < 5) {
++                    print("x is less than 5");
++                } else {
++                    print("x is greater than 5");
++                }
++                return 0;
++            }
++        """,
++        "description": "If-else if-else chain.",
++        "expected_output": "x is less than 5\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int i = 0;
++                while (i < 3) {
++                    print(i);
++                    i = i + 1;
++                }
++                return 0;
++            }
++        """,
++        "description": "While loop.",
++        "expected_output": "0\n1\n2\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                for (int i = 0; i < 3; i = i + 1) {
++                    print(i);
++                }
++                return 0;
++            }
++        """,
++        "description": "For loop.",
++        "expected_output": "0\n1\n2\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int add(int a, int b) {
++                return a + b;
++            }
++            int main() {
++                int result = add(5, 7);
++                print(result);
++                return 0;
++            }
++        """,
++        "description": "Function declaration and call.",
++        "expected_output": "12\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int factorial(int n) {
++                if (n == 0) {
++                    return 1;
++                } else {
++                    return n * factorial(n - 1);
++                }
++            }
++            int main() {
++                print(factorial(4));
++                return 0;
++            }
++        """,
++        "description": "Recursion.",
++        "expected_output": "24\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                print(read_int() + read_int());
++                return 0;
++            }
++        """,
++        "description": "Read integers from input.",
++        "expected_output": "15\n",
++        "inputs": [5, 10]
++    },
++    {
++        "code": """
++            int main() {
++                bool a = read_bool();
++                bool b = read_bool();
++                if (a && b) {
++                    print("Both true");
++                } else {
++                    print("At least one false");
++                }
++                return 0;
++            }
++        """,
++        "description": "Read booleans and logical AND.",
++        "expected_output": "At least one false\n",
++        "inputs": [True, False]
++    },
++    {
++        "code": """
++            int main() {
++                string name = read_str();
++                print("Hello, " + name + "!");
++                return 0;
++            }
++        """,
++        "description": "Read string and string concatenation.",
++        "expected_output": "Hello, World!\n",
++        "inputs": ["World"]
++    },
++    {
++        "code": """
++            int calculate(int x, int y) {
++                return (x * 2) + (y / 2);
++            }
++            int main() {
++                print(calculate(5 + 1, 10 - 2));
++                return 0;
++            }
++        """,
++        "description": "Complex expressions inside function call parameters.",
++        "expected_output": "16\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int a = 10;
++                int b = 3;
++                print(a % b);
++                print(-a);
++                bool c = true;
++                print(!c);
++                return 0;
++            }
++        """,
++        "description": "Modulo and unary operators.",
++        "expected_output": "1\n-10\nfalse\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int i = 0;
++                for (; i < 2; ) {
++                    print(i);
++                    i = i + 1;
++                }
++                return 0;
++            }
++        """,
++        "description": "For loop with empty initialization and increment parts.",
++        "expected_output": "0\n1\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                int y = 0;
++                if (x > 5 && y == 0) {
++                    print("Condition true");
++                }
++                if (x < 5 || y == 0) {
++                    print("Another condition true");
++                }
++                return 0;
++            }
++        """,
++        "description": "Logical AND and OR operators.",
++        "expected_output": "Condition true\nAnother condition true\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int i = 0;
++                {
++                    int i = 2;
++                    print(i);
++                }
++                print(i);
++                return 0;
++            }
++        """,
++        "description": "Scope handling with block statements.",
++        "expected_output": "2\n0\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int sum_up_to(int n) {
++                int sum = 0;
++                for (int i = 1; i <= n; i = i + 1) {
++                    sum = sum + i;
++                }
++                return sum;
++            }
++            int main() {
++                print(sum_up_to(5));
++                return 0;
++            }
++        """,
++        "description": "Function with for loop.",
++        "expected_output": "15\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            string greet(string name) {
++                return "Hello, " + name;
++            }
++            int main() {
++                print(greet("Alice"));
++                return 0;
++            }
++        """,
++        "description": "Function returning string.",
++        "expected_output": "Hello, Alice\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            bool is_even(int n) {
++                return n % 2 == 0;
++            }
++            int main() {
++                print(is_even(4));
++                print(is_even(7));
++                return 0;
++            }
++        """,
++        "description": "Function returning boolean.",
++        "expected_output": "true\nfalse\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                int y = 0;
++                print(x / y);
++                return 0;
++            }
++        """,
++        "description": "Runtime error: Division by zero.",
++        "expected_output": "Error: Runtime Error: Division by zero at line 6, column 22\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10
++                print(x);
++                return 0;
++            }
++        """,
++        "description": "Syntax error: Missing semicolon.",
++        "expected_output": "Error: Syntax Error: Expected one of SEMICOLON, got PRINT at line 5, column 17\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                x = "hello";
++                print(x);
++                return 0;
++            }
++        """,
++        "description": "Runtime error: Type mismatch on assignment.",
++        "expected_output": "Error: Runtime Error: Type mismatch for variable 'x': expected int, got string at line 5, column 17\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x;
++                print(x);
++                return 0;
++            }
++        """,
++        "description": "Runtime error: Undefined variable access.",
++        "expected_output": "Error: Runtime Error: Undefined variable 'x' at line 5, column 23\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                int x = 20;
++                print(x);
++                return 0;
++            }
++        """,
++        "description": "Runtime error: Variable redeclaration in same scope.",
++        "expected_output": "Error: Runtime Error: Variable 'x' already defined in this scope. at line 5, column 17\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                print(10 + "hello");
++                return 0;
++            }
++        """,
++        "description": "Static Type error: Type mismatch for binary operation.",
++        "expected_output": "Error: Type Error: Unsupported operand types for '+': int and string. at line 4, column 22\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                if (x) {
++                    print("true");
++                }
++                return 0;
++            }
++        """,
++        "description": "Static Type error: Non-boolean condition in if.",
++        "expected_output": "Error: Type Error: If condition must be of type 'bool'. at line 4, column 20\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int foo() {
++                return;
++            }
++            int main() {
++                foo();
++                return 0;
++            }
++        """,
++        "description": "Runtime error: Function declared int but returns nothing.",
++        "expected_output": "Error: Runtime Error: Function 'foo' declared to return 'int' but returned nothing. at line 8, column 17\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            void bar() {
++                return 1;
++            }
++            int main() {
++                bar();
++                return 0;
++            }
++        """,
++        "description": "Runtime error: Function declared void but returns value.",
++        "expected_output": "Error: Runtime Error: Function 'bar' declared as 'void' but returned a value. at line 8, column 17\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int sum(int a, int b) {
++                return a + b;
++            }
++            int main() {
++                print(sum(1, "two"));
++                return 0;
++            }
++        """,
++        "description": "Static Type error: Type mismatch in function call argument.",
++        "expected_output": "Error: Type Error: Type mismatch for argument 2 in function 'sum': expected int, got string. at line 5, column 27\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                x = x + 1;
++                print(x);
++                return 0;
++            }
++        """,
++        "description": "Self-assignment with arithmetic.",
++        "expected_output": "11\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                print(read_int());
++                return 0;
++            }
++        """,
++        "description": "Runtime error: No input for read_int.",
++        "expected_output": "Error: Runtime Error: No input provided for read_int(). at line 4, column 23\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                print(read_int());
++                return 0;
++            }
++        """,
++        "description": "Runtime error: Wrong input type for read_int.",
++        "expected_output": "Error: Runtime Error: Expected int input for read_int(), got str. at line 4, column 23\n",
++        "inputs": ["hello"]
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                print(x);
++                return 0;
++            }
++        """,
++        "description": "Multi-line comments.",
++        "expected_output": "10\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                print(x);
++                return 0;
++            }
++        """,
++        "description": "Single-line comments.",
++        "expected_output": "10\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                string s = "Hello\\nWorld";
++                print(s);
++                return 0;
++            }
++        """,
++        "description": "String with newline escape sequence.",
++        "expected_output": "Hello\nWorld\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                string s = "Path: C:\\\\Users\\\\";
++                print(s);
++                return 0;
++            }
++        """,
++        "description": "String with backslash escape sequence.",
++        "expected_output": "Path: C:\\Users\\\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                string s = "Quote: \\"Hello\\"";
++                print(s);
++                return 0;
++            }
++        """,
++        "description": "String with double quote escape sequence.",
++        "expected_output": "Quote: \"Hello\"\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                int y = 20;
++                int z = 30;
++                if (x < y && y < z) {
++                    print("Chain comparison true");
++                }
++                if (x > y || y < z) {
++                    print("Mixed comparison true");
++                }
++                return 0;
++            }
++        """,
++        "description": "Complex logical expressions.",
++        "expected_output": "Chain comparison true\nMixed comparison true\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                for (x = 0; x < 2; x = x + 1) {
++                    print(x);
++                }
++                return 0;
++            }
++        """,
++        "description": "For loop with assignment in initialization.",
++        "expected_output": "0\n1\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int get_val() { return 5; }
++            int main() {
++                int i = 0;
++                for (i = 0; i < 2; i = get_val()) {
++                    print(i);
++                }
++                return 0;
++            }
++        """,
++        "description": "For loop with function call in increment.",
++        "expected_output": "0\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                if (true) {
++                    print("True block");
++                }
++                if (false) {
++                    print("False block");
++                } else {
++                    print("Else block");
++                }
++                return 0;
++            }
++        """,
++        "description": "If statements with boolean literals.",
++        "expected_output": "True block\nElse block\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                int y = 20;
++                if (x < y) {
++                    if (y < z) {
++                        print("Nested if true");
++                    }
++                }
++                return 0;
++            }
++        """,
++        "description": "Nested if statements.",
++        "expected_output": "Nested if true\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int get_five() {
++                return 5;
++            }
++            int main() {
++                print(get_five());
++                return 0;
++            }
++        """,
++        "description": "Function call returning a value.",
++        "expected_output": "5\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            void do_nothing() {
++            }
++            int main() {
++                do_nothing();
++                print("Done");
++                return 0;
++            }
++        """,
++        "description": "Void function call.",
++        "expected_output": "Done\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                print( (x + 5) * 2 );
++                return 0;
++            }
++        """,
++        "description": "Parenthesized expressions.",
++        "expected_output": "30\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                print(true);
++                print(false);
++                return 0;
++            }
++        """,
++        "description": "Printing boolean literals.",
++        "expected_output": "true\nfalse\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                int y = 20;
++                print(x == y);
++                print(x != y);
++                return 0;
++            }
++        """,
++        "description": "Equality and inequality operators.",
++        "expected_output": "false\ntrue\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                int y = 10;
++                print(x == y);
++                print(x != y);
++                return 0;
++            }
++        """,
++        "description": "Equality and inequality operators with equal values.",
++        "expected_output": "true\nfalse\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                int y = 5;
++                print(x > y);
++                print(x < y);
++                print(x >= y);
++                print(x <= y);
++                print(x >= 10);
++                print(x <= 10);
++                return 0;
++            }
++        """,
++        "description": "Relational operators.",
++        "expected_output": "true\nfalse\ntrue\nfalse\ntrue\ntrue\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                int y = 2;
++                int z = 3;
++                print(x / y * z);
++                print(x * y / z);
++                print(x + y * z);
++                return 0;
++            }
++        """,
++        "description": "Operator precedence.",
++        "expected_output": "15\n6\n16\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = true;
++                return 0;
++            }
++        """,
++        "description": "Static Type error: Type mismatch in variable declaration.",
++        "expected_output": "Error: Type Error: Type mismatch in variable declaration for 'x': expected int, got bool. at line 4, column 25\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                if (10) {
++                    print("true");
++                }
++                return 0;
++            }
++        """,
++        "description": "Static Type error: Non-boolean condition in if statement.",
++        "expected_output": "Error: Type Error: If condition must be of type 'bool'. at line 4, column 20\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                string s = "hello";
++                print(x == s);
++                return 0;
++            }
++        """,
++        "description": "Static Type error: Incompatible types for equality comparison.",
++        "expected_output": "Error: Type Error: Incompatible types for equality comparison '==': int and string. at line 5, column 27\n",
++        "inputs": []
++    },
++    {
++        "code": """
++            int main() {
++                int x = 10;
++                bool b = true;
++                print(x < b);
++                return 0;
++            }
++        """,
++        "description": "Static Type error: Incompatible types for relational comparison.",
++        "expected_output": "Error: Type Error: Comparison operator '<' only supported for integers, got int and bool. at line 5, column 25\n",
++        "inputs": []
++    },
++]
++
++# --- Test Runner ---
++def run_tests():
++    total_tests = len(TEST_PROGRAMS)
++    passed_tests = 0
++    results = []
++
++    print(f"Running {total_tests} tests...")
++
++    for i, test_case in enumerate(TEST_PROGRAMS):
++        code = test_case["code"]
++        description = test_case["description"]
++        expected_output = test_case["expected_output"]
++        inputs = test_case.get("inputs", [])
++
++        actual_output = ""
++        try:
++            actual_output = interpreter_main(code, inputs)
++            if actual_output == expected_output:
++                status = "PASS"
++                passed_tests += 1
++            else:
++                status = "FAIL"
++        except Exception as e:
++            status = "ERROR"
++            actual_output = f"Interpreter crashed: {e}\n"
++
++        results.append({"description": description, "status": status, "actual_output": actual_output, "expected_output": expected_output})
++
++    print("\n--- Test Summary ---")
++    for res in results:
++        print(f"[{res['status']}] {res['description']}")
++        if res['status'] != 'PASS':
++            print(f"  Expected:\n{res['expected_output'].strip()}")
++            print(f"  Actual:\n{res['actual_output'].strip()}")
++
++    print(f"\nTotal Tests: {total_tests}, Passed: {passed_tests}, Failed: {total_tests - passed_tests}")
++    return passed_tests == total_tests
++
++# --- Command Line Interface ---
++def main():
++    parser = argparse.ArgumentParser(description="A C-like language interpreter.")
++    parser.add_argument("file", nargs='?', help="Path to the program file to execute.")
++    parser.add_argument("--test", action="store_true", help="Run embedded test suite.")
++    parser.add_argument("--syntax", action="store_true", help="Print language syntax documentation.")
++
++    args = parser.parse_args()
++
++    if args.syntax:
++        print(LANGUAGE_SPECIFICATION)
++        sys.exit(0)
++
++    if args.test:
++        success = run_tests()
++        sys.exit(0 if success else 1)
++
++    if args.file:
++        try:
++            with open(args.file, 'r') as f:
++                program_code = f.read()
++            output = interpreter_main(program_code)
++            sys.stdout.write(output)
++        except FileNotFoundError:
++            print(f"Error: File not found: {args.file}")
++            sys.exit(1)
++        except Exception as e:
++            print(f"Error executing program: {e}")
++            sys.exit(1)
++    else:
++        parser.print_help()
++        sys.exit(1)
++
++if __name__ == "__main__":
++    main()

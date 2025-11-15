@@ -40,6 +40,10 @@ class Hunk:
         self.replace = []
 
         for line in lines:
+            if not line:
+                print("Empty line in hunk, truncating hunk context")
+                break
+
             if line.startswith('+'):
                 line_content = line[1:]  # Skip the first character (+, -, or space)
                 self.replace.append(line_content)
@@ -208,14 +212,10 @@ def patch_code(code_lines: list[str], patch_lines: list[str]):
         source_offset += hunk.replace_count() - hunk.match_count()
     
 if __name__ == "__main__":
-    # original_file_name = "test_sets/patch/nqueens_6702_v1.py"
-    # patch_file_name = "test_sets/patch/nqueens_6702_v2.py"
-    # original_file_name = "test_sets/patch/interp_5165_v1.py"
-    # patch_file_name = "test_sets/patch/interp_5165_v2.patch"
 
-    for n in range(1,5):
-        original_file_name = f"test_sets/patch-v2/c_interp_8560_v{n}.py"
-        patch_file_name = f"test_sets/patch-v2/c_interp_8560_v{n+1}.patch"
+    for n in range(1,6):
+        original_file_name = f"test_sets/patch/test{n}.py"
+        patch_file_name = f"test_sets/patch/test{n}.patch"
 
         print(f"--- Testing patching {original_file_name} with {patch_file_name} ---")
         with open(original_file_name, 'r') as original_file:
@@ -226,25 +226,9 @@ if __name__ == "__main__":
 
         code_lines = original_content.splitlines()
         patch_lines = patch_content.splitlines()
-
-        # hunk_list = extract_hunks(patch_lines)
-        # print(f"Extracted {len(hunk_list)} hunks:")
-        # for hunk in hunk_list:
-        #     print(hunk)
-        #     print("Matches from: ", hunk.match_code(code_lines, 0))
         patch_code(code_lines, patch_lines)
         # save the file to 
         with open(f"solutions/patched_file_v{n+1}.py", "w") as f:
             f.write("\n".join(code_lines))
         print("-" * 40)
     
-    # try:
-    #     patch_code(code_lines, patch_lines)
-    # except Exception as e:
-    #     print(f"Error occurred while patching code: {e}")
-    #     exit(1)
-
-    # patched_code = '\n'.join(code_lines)
-    # print("----- Patched Code -----")
-    # print(patched_code)
-
