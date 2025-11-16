@@ -76,6 +76,10 @@ class Context:
     def erase_iteration(self):
         self.current_iteration = None
 
+    def trim_iterations(self, limit_by):
+        self.iterations = self.iterations[:limit_by]
+        self.current_iteration = None
+
     def save_to(self, filename_template, content, content_name=None):
         """
             Saves content to a file with a name based on the template.
@@ -398,6 +402,25 @@ def goals_met(config: dict, context: Context) -> tuple[bool, int]:
         print(f"⚠️  Failed to parse goals check response as JSON: {response_text}")
         return (False, 0)
 
+def progress_check(context: Context) -> int:
+    """ 
+    Checks if there is progress in scores.
+    If there is no progress over last 3 iterations, returns the number of iteration to return to.
+    """
+    # Calculate score sequence
+    scores = [x.score for x in context.iterations]
+    scores.append(context.current.score)
+    if len(scores) < 3:
+        return None  # Not enough data to determine
+    # Find last best score index (rightmost), and if it's older than 3 iterations, return that index
+    best_score = max(scores)
+    # Find this score from the right
+    best_index = len(scores) - 1 - scores[::-1].index(best_score)
+    if best_index < len(scores) - 3:
+        return best_index
+    return None
+
+
 def format_final_code(config: dict, context: Context, token_tracker: TokenUsageTracker) -> list:
     """
     Add comment header to code.
@@ -498,6 +521,11 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
         scores = [x.score for x in context.iterations]
         scores.append(context.current.score)
         print(f"📊 Completion score progression: {scores}")
+
+        return_to_iteration = progress_check(context)
+        if return_to_iteration is not None:
+            print(f"🔄 No progress detected. Resetting to iteration {return_to_iteration + 1} and continuing from there.")
+            context.trim_iterations(return_to_iteration+1)
 
     # Print token usage summary
     token_tracker.print_summary()

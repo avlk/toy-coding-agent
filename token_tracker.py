@@ -81,7 +81,8 @@ class TokenUsageTracker:
         
         for model_name, stats in sorted(self.stats.items()):
             avg_time = stats['total_time'] / stats['llm_run_count'] if stats['llm_run_count'] > 0 else 0
-            lines.append(f"\n🤖 Model: {model_name}")
+            lines.append("")
+            lines.append(f"🤖 Model: {model_name}")
             lines.append(f"   Runs: {stats['llm_run_count']}")
             lines.append(f"   Time: {stats['total_time']:.1f}s total, {avg_time:.1f}s avg per call")
             lines.append(f"   Total tokens: {stats['total_token_count']:,}")
@@ -96,7 +97,8 @@ class TokenUsageTracker:
         total_tokens = sum(s['total_token_count'] for s in self.stats.values())
         total_time = sum(s['total_time'] for s in self.stats.values())
         
-        lines.append("\n" + "-" * 80)
+        lines.append("")
+        lines.append("-" * 80)
         lines.append(f"📈 Grand Total: {total_runs} runs, {total_tokens:,} tokens, {total_time:.1f}s")
         lines.append("=" * 80)
         
