@@ -289,7 +289,7 @@ def code(config: dict, context: Context):
         patch_lines = clean_code_block(diff_blocks[0])
         print("🛠️ Detected unified diff patch. Applying patch to previous code.")
         prev_code_lines = to_lines(context.previous.code)
-        patch_code(prev_code_lines, patch_lines)
+        patch_code(prev_code_lines, patch_lines, fuzziness=2)
         context.current.code = prev_code_lines 
     elif code_blocks:
         if not code_quality_gate(code_blocks[0]):
@@ -351,7 +351,7 @@ def fix_syntax_errors(config: dict, context: Context):
         print("🛠️ Applying syntax fix diff patch to current code.")
         patch_lines = clean_code_block(diff_blocks[0])
         code_lines = to_lines(context.current.code)
-        patch_code(code_lines, patch_lines)
+        patch_code(code_lines, patch_lines, fuzziness=2)
         context.current.code = code_lines 
         # Save fixed code
         context.save_to("{name}_v{iter}_syntax_fixed.py", context.current.code, content_name="syntax fixed code")

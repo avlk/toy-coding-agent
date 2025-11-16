@@ -1,4 +1,5 @@
 import re
+import Levenshtein
 
 # Hunk header for a normal unified diff
 UNIFIED_DIFF_HUNK_HEADER_REGEX = r'@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@'
@@ -35,7 +36,6 @@ class Hunk:
             self.start_original = 0
             self.start_new = 0
         
-        self.fuzzy_match = False
         self.match = []
         self.replace = []
 
@@ -117,7 +117,7 @@ class Hunk:
             return match.group(0).rstrip()
         return line    
         
-    def matches_code(self, code_lines: list[str], start_line: int) -> bool:
+    def matches_code(self, code_lines: list[str], start_line: int, fuzziness: int) -> bool:
         # Check if the hunk matches the code lines starting at start_line (0-based)
         for i in range(self.match_count()):
             code_index = start_line + i
@@ -127,28 +127,36 @@ class Hunk:
             code_line = code_lines[code_index]
             patch_line = self.match[i]
 
-            if self.fuzzy_match:
+            if fuzziness == 0:
+                # With no fuzziness, lines must match exactly
+                # If there is a mismatch, return False
+                if code_line != patch_line:
+                    return False
+
+            if fuzziness > 0:
+                # With fuzziness, trim comments and trailing whitespace before comparing
                 code_line = self.trim_comment(code_line)
                 patch_line = self.trim_comment(patch_line)
 
-            if code_line != patch_line:
-                if i > 3:
-                    print(f"Matched {i}/{self.match_count()} lines starting from {start_line+1}, broke at line {code_index+1}")
-                    print(f" src: {code_line}$")
-                    print(f"diff: {patch_line}$")
-                return False
+            if fuzziness == 1:
+                # With fuzziness 1, ignore leading/trailing whitespace and still require exact match of the remaining content
+                if code_line != patch_line:
+                    return False
+
+            if fuzziness >= 2:
+                # With fuzziness 2, match even if a couple of characters differ
+                if Levenshtein.distance(code_line, patch_line) > 3:
+                    return False
+
         return True
 
-    def match_code(self, code_lines: list[str], start_line: int) -> int:
+    def match_code(self, code_lines: list[str], fuzziness: int) -> int:
         # Try to match the hunk to code lines starting at start_line (0-based)
         # Return the line where it matches, or None if no match
-        for i in range(start_line, len(code_lines) - self.match_count() + 1):
-            if self.matches_code(code_lines, i):
+        for i in range(0, len(code_lines) - self.match_count() + 1):
+            if self.matches_code(code_lines, i, fuzziness):
                 return i
         return None
-
-    def set_fuzzy_match(self, fuzzy: bool):
-        self.fuzzy_match = fuzzy
 
     def __repr__(self) -> str:
         return f"(start_original={self.start_original}, start_new={self.start_new}, match_count={self.match_count()}, replace_count={self.replace_count()})"
@@ -179,8 +187,9 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
 
     return hunks
 
-def patch_code(code_lines: list[str], patch_lines: list[str]):
+def patch_code(code_lines: list[str], patch_lines: list[str], fuzziness: int = 0):
     hunk_list = extract_hunks(patch_lines)
+    failed_hunks = 0
     print(f"Extracted {len(hunk_list)} hunks:")
     # identify all hunks to apply
     application_list = []
@@ -188,19 +197,21 @@ def patch_code(code_lines: list[str], patch_lines: list[str]):
         if hunk.empty():
             print("[SKIP] Useless hunk")
             continue
-        print("Hunk", hunk)
-        hunk_start = hunk.match_code(code_lines, 0)
+        # print("Hunk", hunk)
+        hunk_start = None
+        for fuzziness_level in range(fuzziness + 1):
+            hunk_start = hunk.match_code(code_lines, fuzziness)
+            if hunk_start:
+                if fuzziness_level > 0:
+                    print(f"[WARNING] Hunk {hunk} applied with fuzziness {fuzziness_level}")
+                break
         if hunk_start is None:
-            print("[WARNING] Can't apply hunk, retrying with fuzzy matching")
-            hunk.set_fuzzy_match(True)
-            hunk_start = hunk.match_code(code_lines, 0)
-
-        if hunk_start is None:
-            print("[ERROR] Still can't apply hunk", hunk)
+            print(f"[FAIL] Can't apply hunk {hunk}")
+            failed_hunks += 1
         else:
-            print("[OK] Applying hunk at", hunk_start)
+            # print("[OK] Applying hunk at", hunk_start)
             application_list.append((hunk_start, hunk))
-
+        
     # Sort application_list by start
     application_list.sort(key=lambda x: x[0])
 
@@ -211,9 +222,15 @@ def patch_code(code_lines: list[str], patch_lines: list[str]):
         code_lines[start:start + hunk.match_count()] = hunk.replace
         source_offset += hunk.replace_count() - hunk.match_count()
     
+    if failed_hunks > 0:
+        print(f"Patch application failed. {failed_hunks}/{len(hunk_list)} hunks failed to apply.")
+    else:
+        print(f"Patch application complete. All {len(hunk_list)} hunks applied successfully.")
+    return failed_hunks == 0
+
 if __name__ == "__main__":
 
-    for n in range(1,6):
+    for n in range(1,7):
         original_file_name = f"test_sets/patch/test{n}.py"
         patch_file_name = f"test_sets/patch/test{n}.patch"
 
@@ -226,7 +243,7 @@ if __name__ == "__main__":
 
         code_lines = original_content.splitlines()
         patch_lines = patch_content.splitlines()
-        patch_code(code_lines, patch_lines)
+        patch_code(code_lines, patch_lines, fuzziness=2)
         # save the file to 
         with open(f"solutions/patched_file_v{n+1}.py", "w") as f:
             f.write("\n".join(code_lines))

@@ -1,0 +1,218 @@
+--- a/main.py
++++ b/main.py
+@@ -1,4 +1,5 @@
+ import argparse
++import sys
+ import unittest
+ import re
+ 
+@@ -13,10 +14,10 @@
+ # ANSI escape codes for terminal colors (black text on white background)
+ # \033[30m sets text color to black
+ # \033[47m sets background color to white
+-# \033[0m resets all attributes
++# \033[0m resets all attributes.
+ COLOR_BLACK_ON_WHITE = "\\033[30m\\033[47m"
+ COLOR_RESET = "\\033[0m"
+-
++COLOR_WHITE_ON_BLACK = "\\033[40m\\033[37m" # White text on black background for borders
+ # Barcode dimensions and padding (for Code 128-B, not strictly UPC-A)
+ BARCODE_HEIGHT = 12
+ BORDER_WIDTH = 10
+@@ -27,14 +28,15 @@
+ # for multiple character sets (A, B, C), shift functions, and FNC characters.
+ # For UPC-A, only digits are relevant. This mapping provides a binary representation
+ # for each digit, along with start and stop sequences.
+-CODE128B_ENCODING = {
+-    'START_CODE_A': '110100011101',  # Start code for Code 128-B (simplified)
+-    'STOP_CODE': '110001110101',     # Stop code for Code 128-B
+-    '0': '0011101100', '1': '0100100011', '2': '0100101100', '3': '0100110001',
+-    '4': '0111100010', '5': '0111101000', '6': '0111010001', '7': '0101110001', '8': '0101110010', '9': '0101110100',
+-    'A': '1100010010', 'B': '1100100001', 'C': '1100100100', 'D': '1100111001', 'E': '1101110001', 'F': '1101110100',
+-    'G': '1101001110', 'H': '1111000010', 'I': '1111001000', 'J': '1111010001', 'K': '1111110001', 'L': '1111110100',
+-    'M': '1110001110', 'N': '1110011100', 'O': '1110111000', 'P': '1111011100', 'Q': '1111101100', 'R': '1110001011',
+-    'S': '1100011101', 'T': '1101000101', 'U': '1101010100', 'V': '1101100100', 'W': '1101101101', 'X': '1110100101',
+-    'Y': '1110101100', 'Z': '1111000101',
++CODE128B_ENCODING = { # Using Code 128-B as it supports alphanumeric and is more flexible.
++    'START_CODE_B': '111110100010', # Start code for Code 128-B
++    'STOP_CODE': '110001110101',    # Stop code for Code 128-B
++    ' ': '0110001000', # Space character encoding
++    '0': '0011101100', '1': '0100100011', '2': '0100101100', '3': '0100110001',
++    '4': '0111100010', '5': '0111101000', '6': '0111010001', '7': '0101110001', '8': '0101110010', '9': '0101110100',
++    'A': '1100010010', 'B': '1100100001', 'C': '1100100100', 'D': '1100111001', 'E': '1101110001', 'F': '1101110100',
++    'G': '1101001110', 'H': '1111000010', 'I': '1111001000', 'J': '1111010001', 'K': '1111110001', 'L': '1111110100',
++    'M': '1110001110', 'N': '1110011100', 'O': '1110111000', 'P': '1111011100', 'Q': '1111101100', 'R': '1110001011',
++    'S': '1100011101', 'T': '1101000101', 'U': '1101010100', 'V': '1101100100', 'W': '1101101101', 'X': '1110100101',
++    'Y': '1110101100', 'Z': '1111000101',
+ }
+ 
+ # --- Helper Functions ---
+@@ -43,14 +45,14 @@
+     """Converts text to a binary string based on Code 128-B mapping."""
+     # For simplicity and to meet the prompt's constraints, we'll use a single character set (B)
+     # and assume the input is compatible. A full Code 128-B implementation is complex.
+-    binary_string = CODE128B_ENCODING.get('START_CODE_A') # Using START_CODE_A as per original code, though START_CODE_B is more common for alphanumeric
++    binary_string = CODE128B_ENCODING.get('START_CODE_B') # Using START_CODE_B for alphanumeric
+     if not binary_string:
+         raise ValueError("Start code not found in encoding map.")
+ 
+     for char in text.upper(): # Code 128-B is case-insensitive for alphanumeric
+         encoding = CODE128B_ENCODING.get(char)
+         if encoding:
+-            binary_string += encoding
++            binary_string += encoding # Each character's encoding is appended
+         else:
+             # If a character is not found, it's an error for this simplified implementation.
+             raise ValueError(f"Character '{char}' is not supported in the current Code 128-B mapping.")
+@@ -61,10 +63,9 @@
+ 
+ def binary_to_barcode_rows(binary_string):
+     """Converts a binary string to barcode rows using BINARY_PAIR_TO_CHAR."""
+-    row_chars = []
+-    for i in range(0, len(binary_string), 2):
+-        pair = binary_string[i:i+2]  # Each character in barcode_data represents 2 bits
+-        row_chars.append(BINARY_PAIR_TO_CHAR.get(pair, ' '))  # Default to space if pair not found
++    row_chars = [] # This will store the characters that form the barcode pattern
++    for i in range(0, len(binary_string), 2): # Iterate through the binary string two bits at a time
++        pair = binary_string[i:i+2] # Get a pair of bits
++        row_chars.append(BINARY_PAIR_TO_CHAR.get(pair, ' ')) # Map the pair to a rendering character
+     return "".join(row_chars)
+ 
+ def render_barcode(barcode_data):
+@@ -73,23 +74,23 @@
+     barcode_content_width = len(barcode_data) # This is the width of the rendered characters, not bits
+ 
+     # Add top border
+-    # The border should be a solid line of the background color (white)
+-    # For terminal, we use black characters on white background. So border is black.
+-    border_char = BINARY_PAIR_TO_CHAR['11'] # Use full block for border
+-    border_line = border_char * (barcode_content_width + 2 * BORDER_WIDTH)
+-    barcode_lines.append(COLOR_BLACK_ON_WHITE + border_line + COLOR_RESET)
++    # The border should be a solid line of white space.
++    # Using white text on black background for the border characters to simulate white space.
++    border_char = ' ' # Use space for white border
++    border_line = border_char * (barcode_content_width + 2 * BORDER_WIDTH) # Full width border line
++    barcode_lines.append(COLOR_WHITE_ON_BLACK + border_line + COLOR_RESET) # Apply white on black for border
+ 
+     # Add barcode rows with side borders
+     # The barcode content itself should be BARCODE_HEIGHT lines tall.
+-    for _ in range(BARCODE_HEIGHT): # Use BARCODE_HEIGHT for content rows
+-        row_str = border_char * BORDER_WIDTH  # Left border
+-        for char in barcode_data:
+-            row_str += char
+-        row_str += border_char * BORDER_WIDTH  # Right border
+-        barcode_lines.append(COLOR_BLACK_ON_WHITE + row_str + COLOR_RESET)
++    for _ in range(BARCODE_HEIGHT): # Generate BARCODE_HEIGHT lines of barcode content
++        row_str = COLOR_WHITE_ON_BLACK + (border_char * BORDER_WIDTH) # Left white border
++        for char in barcode_data: # Append barcode characters
++            row_str += COLOR_BLACK_ON_WHITE + char + COLOR_WHITE_ON_BLACK # Alternate colors for barcode chars
++        row_str += (border_char * BORDER_WIDTH) + COLOR_RESET # Right white border and reset color
++        barcode_lines.append(row_str)
+ 
+     # Add bottom border
+-    barcode_lines.append(COLOR_BLACK_ON_WHITE + border_line + COLOR_RESET) # Use the same border line as top
++    barcode_lines.append(COLOR_WHITE_ON_BLACK + border_line + COLOR_RESET) # Bottom border, same as top
+ 
+     return "\\n".join(barcode_lines)
+ 
+@@ -103,7 +105,7 @@
+     # The input string is assumed to be compatible with Code 128-B.
+     # Code 128-B supports alphanumeric characters.
+     # The error handling for unsupported characters is still relevant.
+-    try:
++    try: # Attempt to convert text to binary representation
+         binary_representation = text_to_binary(input_string)
+         # barcode_data will be a string of characters like ' ', '█', '▌', '▐'
+         barcode_data = binary_to_barcode_rows(binary_representation)
+@@ -118,10 +120,10 @@
+         """Test barcode generation with default input."""
+         barcode_output = generate_barcode_string()
+         self.assertIn(BINARY_PAIR_TO_CHAR['11'], barcode_output) # Check for presence of barcode elements
+-        self.assertIn(BINARY_PAIR_TO_CHAR['00'], barcode_output) # Check for presence of barcode elements
+-        self.assertIn(COLOR_BLACK_ON_WHITE, barcode) # Check for color codes
+-        self.assertIn(COLOR_RESET, barcode) # Check for color reset code.
+-
++        self.assertIn(BINARY_PAIR_TO_CHAR['00'], barcode_output) # Check for presence of barcode elements (space)
++        self.assertIn(COLOR_BLACK_ON_WHITE, barcode_output) # Check for color codes
++        self.assertIn(COLOR_RESET, barcode_output) # Check for color reset code.
++        
+     def test_custom_input(self):
+         """Test barcode generation with a custom input string."""
+         custom_string = "12345" # Shorter string for testing
+@@ -131,15 +133,15 @@
+ 
+     def test_barcode_height_and_border(self):
+         """Test if the barcode has the correct height and border width."""
+-        barcode = generate_barcode_string("123") # Short string to test structure
++        barcode = generate_barcode_string("123") # Short string to test structure and dimensions
+         lines = barcode.split('\n')
+         # The total height should be BARCODE_HEIGHT (content) + 2 * BORDER_WIDTH (top/bottom borders)
+         expected_total_height = BARCODE_HEIGHT + 2 * BORDER_WIDTH
+         self.assertEqual(len(lines), expected_total_height, f"Expected height {expected_total_height}, got {len(lines)}")
+-
++        
+         # Check if lines have the expected width including borders
+         # Calculate the expected width based on the binary representation of "123"
+-        binary_repr_123 = text_to_binary("123") # This is the bit string
++        binary_repr_123 = text_to_binary("123") # This is the bit string (e.g., START_CODE_B + '0' + '1' + '2' + STOP_CODE)
+         # Each 2 bits of binary string maps to one character in barcode_data (rendered chars)
+         expected_content_width = len(binary_repr_123) // 2
+         expected_width = expected_content_width + 2 * BORDER_WIDTH # Content width + left border + right border
+@@ -147,8 +149,8 @@
+             # Remove ANSI escape codes for accurate length check
+             cleaned_line = re.sub(r'\x1b\[[0-9;]*m', '', line) # More robust way to remove ANSI codes
+             # The border characters are also part of the width calculation.
+-            self.assertEqual(len(cleaned_line), expected_width, f"Line width incorrect. Expected {expected_width}, got {len(cleaned_line)}")
+-            self.assertTrue(cleaned_line.startswith(border_char * BORDER_WIDTH), "Left border is incorrect.")
++            self.assertEqual(len(cleaned_line), expected_width, f"Line width incorrect. Expected {expected_width}, got {len(cleaned_line)}") # Check total line width
++            self.assertTrue(cleaned_line.startswith(border_char * BORDER_WIDTH), "Left border is incorrect.") # Check left border
+             self.assertTrue(cleaned_line.endswith(border_char * BORDER_WIDTH), "Right border is incorrect.")
+ 
+     def test_scannability_structure(self):
+@@ -163,24 +165,24 @@
+         # For this exercise, we'll check if the output *structure* is plausible for a barcode.
+         """
+         input_str = "12345678901" # A typical UPC-A length (11 digits + checksum)
+-        barcode_output = generate_barcode_string(input_str) # This is the rendered string
++        barcode_output = generate_barcode_string(input_str) # This is the rendered string with ANSI codes
+         binary_repr = text_to_binary(input_str) # This is the bit string
+         barcode_rows_data = binary_to_barcode_rows(binary_repr) # This is the string of rendering chars
+-
++        
+         # Basic structural checks for scannability:
+         # 1. Ensure all four rendering characters are present in the barcode data. (Excluding borders)
+         # Check within the actual barcode content part of the output string, not the borders
+         # Find the content part by removing borders and ANSI codes
+         lines = barcode_output.split('\n')
+         if len(lines) > 2: # Ensure there are content lines
+-            content_line = re.sub(r'\x1b\[[0-9;]*m', '', lines) # Get first content line and remove ANSI codes
++            content_line = re.sub(r'\x1b\[[0-9;]*m', '', lines) # Get first content line and remove ANSI codes
+             content_part = content_line[BORDER_WIDTH:-BORDER_WIDTH] # Extract only the barcode data part
+             self.assertIn(BINARY_PAIR_TO_CHAR['00'], content_part, "Missing space character ('00') in barcode content.")
+             self.assertIn(BINARY_PAIR_TO_CHAR['11'], content_part, "Missing full block character ('11') in barcode content.")
+             self.assertIn(BINARY_PAIR_TO_CHAR['01'], content_part, "Missing left half block character ('01') in barcode content.")
+             self.assertIn(BINARY_PAIR_TO_CHAR['10'], content_part, "Missing right half block character ('10') in barcode content.")
+-
++            
+         # 2. Check for the presence of start and stop codes in the binary representation.
+         # These are crucial for scanners to identify the barcode.
+         self.assertTrue(binary_repr.startswith(CODE128B_ENCODING['START_CODE_A']), f"Barcode does not start with the correct start code. Expected: {CODE128B_ENCODING['START_CODE_A']}, Got: {binary_repr[:len(CODE128B_ENCODING['START_CODE_A'])]}")
+         self.assertTrue(binary_repr.endswith(CODE128B_ENCODING['STOP_CODE']), f"Barcode does not end with the correct stop code. Expected: {CODE128B_ENCODING['STOP_CODE']}, Got: {binary_repr[-len(CODE128B_ENCODING['STOP_CODE']):]}")
+@@ -195,7 +197,7 @@
+     parser.add_argument("--test", action="store_true", help="Run unit tests.")
+ 
+     args = parser.parse_args()
+-
++    
+     if args.test:
+         # Run tests
+         loader = unittest.TestLoader()
+@@ -203,7 +205,7 @@
+         runner = unittest.TextTestRunner()
+         result = runner.run(suite)  # Run tests
+         sys.exit(not result.wasSuccessful()) # Exit with 0 if tests pass, 1 otherwise
+-    else: # Generate and print barcode
++    else: # Generate and print barcode if --test is not specified
+         # Generate and print barcode
+         barcode_output = generate_barcode_string(args.input_string)
+         print(barcode_output)
