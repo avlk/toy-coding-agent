@@ -22,16 +22,16 @@ If after your fixes the code is runnable, execute it to verify the changes work.
 # Previously generated code
 
 ~~~python
-{previous_code}
+{previous.code}
 ~~~
 
 # Execution results from the previous version
 
-{program_output}
+{previous.program_output}
 
 # Feedback on previous version
 
-{feedback}
+{previous.feedback}
 
 
 # Output formatting

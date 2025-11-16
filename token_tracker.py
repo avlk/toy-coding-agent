@@ -64,33 +64,45 @@ class TokenUsageTracker:
         ))
         print(f"Time taken for LLM call: {response_time:.1f} seconds")
     
-    def print_summary(self):
-        """Print aggregated token usage statistics for all models."""
-        if not self.stats:
-            print("\n📊 No LLM usage statistics to report.")
-            return
+    def summary(self) -> list[str]:
+        """
+        Generate aggregated token usage statistics for all models.
         
-        print("\n" + "=" * 80)
-        print("📊 LLM Token Usage Summary")
-        print("=" * 80)
+        Returns:
+            List of strings containing formatted statistics
+        """
+        if not self.stats:
+            return ["\n📊 No LLM usage statistics to report."]
+        
+        lines = []
+        lines.append("\n" + "=" * 80)
+        lines.append("📊 LLM Token Usage Summary")
+        lines.append("=" * 80)
         
         for model_name, stats in sorted(self.stats.items()):
             avg_time = stats['total_time'] / stats['llm_run_count'] if stats['llm_run_count'] > 0 else 0
-            print(f"\n🤖 Model: {model_name}")
-            print(f"   Runs: {stats['llm_run_count']}")
-            print(f"   Time: {stats['total_time']:.1f}s total, {avg_time:.1f}s avg per call")
-            print(f"   Total tokens: {stats['total_token_count']:,}")
-            print(f"   ├─ Prompt: {stats['prompt_token_count']:,}")
-            print(f"   ├─ Candidates: {stats['candidates_token_count']:,}")
-            print(f"   ├─ Cached: {stats['cached_content_token_count']:,}")
-            print(f"   ├─ Thoughts: {stats['thoughts_token_count']:,}")
-            print(f"   └─ Tool use: {stats['tool_use_prompt_token_count']:,}")
+            lines.append(f"\n🤖 Model: {model_name}")
+            lines.append(f"   Runs: {stats['llm_run_count']}")
+            lines.append(f"   Time: {stats['total_time']:.1f}s total, {avg_time:.1f}s avg per call")
+            lines.append(f"   Total tokens: {stats['total_token_count']:,}")
+            lines.append(f"   ├─ Prompt: {stats['prompt_token_count']:,}")
+            lines.append(f"   ├─ Candidates: {stats['candidates_token_count']:,}")
+            lines.append(f"   ├─ Cached: {stats['cached_content_token_count']:,}")
+            lines.append(f"   ├─ Thoughts: {stats['thoughts_token_count']:,}")
+            lines.append(f"   └─ Tool use: {stats['tool_use_prompt_token_count']:,}")
         
-        # Print grand totals
+        # Add grand totals
         total_runs = sum(s['llm_run_count'] for s in self.stats.values())
         total_tokens = sum(s['total_token_count'] for s in self.stats.values())
         total_time = sum(s['total_time'] for s in self.stats.values())
         
-        print("\n" + "-" * 80)
-        print(f"📈 Grand Total: {total_runs} runs, {total_tokens:,} tokens, {total_time:.1f}s")
-        print("=" * 80)
+        lines.append("\n" + "-" * 80)
+        lines.append(f"📈 Grand Total: {total_runs} runs, {total_tokens:,} tokens, {total_time:.1f}s")
+        lines.append("=" * 80)
+        
+        return lines
+    
+    def print_summary(self):
+        """Print aggregated token usage statistics for all models."""
+        for line in self.summary():
+            print(line)

@@ -51,11 +51,13 @@ def format_goals(goals) -> str:
     Returns:
         Formatted string with bullet points (e.g., "\n- goal1\n- goal2")
     """
-    if isinstance(goals, str):
-        # Already formatted
-        return goals
-    # Format list as bulleted items
-    return "\n- " + "\n- ".join(goals)
+    goals_list = to_lines(goals)
+    # Iterate over goals_list and add list bullet (-) if it is not there
+    for i in range(len(goals_list)):
+        if not goals_list[i].strip().startswith("-"):
+            goals_list[i] = "- " + goals_list[i]
+
+    return "\n".join(goals_list)
 
 
 # --- File I/O Functions ---
@@ -93,7 +95,7 @@ def save_to_file(filename: str, content, content_name="output") -> str:
     
     with open(filepath, "w") as f:
         f.write(text)
-    print(f"✅ Saved {content_name} to: {filepath}")
+    print(f"💾 Saved {content_name} to: {filepath}")
     return str(filepath)
 
 
