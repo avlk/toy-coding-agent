@@ -101,10 +101,10 @@ llm_config = genai.types.GenerateContentConfig(
 
 llm_config_coder = genai.types.GenerateContentConfig(
     temperature=0.3,
-    tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution), 
-           genai.types.Tool(google_search=genai.types.GoogleSearch()),
-           {"url_context": {}}
-       ],
+    tools=[
+        genai.types.Tool(code_execution=genai.types.ToolCodeExecution), 
+        genai.types.Tool(google_search=genai.types.GoogleSearch())
+    ],
 )
 
 llm_config_goals_check = genai.types.GenerateContentConfig(
@@ -361,11 +361,16 @@ def fix_syntax_errors(config: dict, context: Context):
             "program_output": to_string(context.current.program_output)
         })
         context.save_to("{name}_syntax_fix_prompt_v{iter}.md", syntax_fix_prompt_formatted, content_name="syntax fix prompt")
-        syntax_fix_response = llm_query(syntax_fix_prompt_formatted, model=config["coder_model"]) # Or utility_model?
+        syntax_fix_response = llm_query(syntax_fix_prompt_formatted, model=config["reviewer_model"]) # Coder or utility_model?
         context.save_to("{name}_syntax_fix_response_v{iter}.json", syntax_fix_response["full"].model_dump_json(indent=2), content_name="syntax fix response")
         syntax_fix_text = syntax_fix_response["text"]
         context.save_to("{name}_syntax_fix_response_v{iter}.md", syntax_fix_text, content_name="syntax fix response")
         diff_blocks = find_code_blocks(syntax_fix_text, delimiter="~~~", language="diff")
+        if not diff_blocks:
+            diff_blocks = find_code_blocks(syntax_fix_text, delimiter="```", language="diff")
+        if not diff_blocks:
+            print("❌ No diff block found in syntax fix response.")
+            return False
     except Exception as e:
         print(f"❌ Error during syntax fix generation: {e}")
         return False

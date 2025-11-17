@@ -1,15 +1,17 @@
 # Your task
 
 You are an AI coding agent. Your job is to refine Python code for the following use case to meet the following goals.
+The code you are refining has to be a single file of Python code.
 
 You are provided with the previously generated code and a feedback on it.
 
-Focus on addressing the TODO items from the feedback section. You don't need to fix everything in one iteration.
+Address the TODO items from the feedback section.
 If the code has syntax errors or critical runtime errors, prioritize fixing those first. 
+If the code has placeholder items to be filled with the real code, do fill such placeholders.
 
-**Think harder!!!**
+When URL's are provided, fetch them to get additional knowledge.
 
-If after your fixes the code is runnable, execute it to verify the changes work.
+Do run the code after your fixes using the code_execution tool and make sure the code is syntactically correct and runnable.
 
 # Use Case
 
