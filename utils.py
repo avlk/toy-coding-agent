@@ -21,6 +21,8 @@ def to_lines(text) -> list:
     Returns:
         List of strings (lines)
     """
+    if text is None:
+        return []
     if isinstance(text, list):
         return text
     return text.splitlines()
@@ -36,10 +38,29 @@ def to_string(lines) -> str:
     Returns:
         String with lines joined by newlines
     """
+    if lines is None:
+        return ""
     if isinstance(lines, str):
         return lines
     return '\n'.join(lines)
 
+def select_variant(lines: list[str], variant: str) -> list[str]:
+    """
+    Filters lines and for the lines that start with "?{variant} " prefix, select only those lines with the correct variant.
+    Args:
+        lines: List of strings (lines)
+        variant: Variant string to filter on (e.g., "a", "b", etc.)
+    Returns:
+        Filtered list of strings (lines)
+    """
+    selected_lines = []
+    prefix = f"?{variant} "
+    for line in lines:
+        if line.startswith(prefix):
+            selected_lines.append(line[len(prefix):])
+        elif not line.startswith("?"):
+            selected_lines.append(line)
+    return selected_lines
 
 def format_goals(goals) -> str:
     """
@@ -85,6 +106,9 @@ def save_to_file(filename: str, content, content_name="output") -> str:
     Returns:
         Absolute path to the saved file
     """
+    if not content:
+        return
+ 
     filepath = Path.cwd() / "solutions" / filename
     
     # Convert list to string if needed
@@ -142,7 +166,7 @@ def code_quality_gate(code) -> bool:
     lines = to_lines(code)
 
     max_line_length = 2048 # model often returns very long lines with no meaning, repeating same one or two characters
-    max_same_lines = 10 # model often hallucinates returning the same line until MAX_TOKENS
+    max_same_lines = 100 # model often hallucinates returning the same line until MAX_TOKENS
 
     # Return False if there are too long lines or there are more than X consecutive lines with the same content
     for i, line in enumerate(lines):

@@ -240,7 +240,7 @@ def refine_goals(config: dict, context: Context):
     context.goals = refine_json["refined_goals"]  # Keep as list
     return True
 
-def code(config: dict, context: Context):
+def code(config: dict, context: Context, use_diffs: bool = True):
 
     if context.previous:
         print("🔄Creating code refinement prompt...")
@@ -250,37 +250,50 @@ def code(config: dict, context: Context):
         script_path = "scripts/coder create.md"
 
     script = load_file(script_path)
-            
+    if use_diffs:
+        script = to_string(select_variant(to_lines(script), "a"))
+    else:
+        script = to_string(select_variant(to_lines(script), "b"))
+
     prompt = script.format_map({
         "use_case": context.use_case,
         "goals": context.goals,
-        "previous": context.previous
+        "code": to_string(context.previous.code if context.previous else ""),
+        "output": to_string(context.previous.program_output if context.previous else ""),
+        "feedback": to_string(context.previous.feedback if context.previous else "")
     })
     context.save_to("{name}_coder_prompt_{iter}.md", prompt, content_name="coder prompt")
 
-    print("🚧 Generating code...")
-    code_response = llm_query(prompt, config=llm_config_coder, model=config["coder_model"])
-    
-    print("🧾 Processing LLM output...")
-    # Save JSON response for debugging
-    context.save_to("{name}_coder_raw_{iter}.json", code_response["full"].model_dump_json(indent=2), content_name="raw LLM JSON response" )
-    context.save_to("{name}_coder_text_{iter}.md", code_response["text"], content_name="raw LLM text")
+    try:
+        print("🚧 Generating code...")
+        coder_config=llm_config_coder
+        # if context.previous:
+        #     coder_config.temperature=0.5
+        code_response = llm_query(prompt, config=coder_config, model=config["coder_model"])
+        
+        print("🧾 Processing LLM output...")
+        # Save JSON response for debugging
+        context.save_to("{name}_coder_raw_{iter}.json", code_response["full"].model_dump_json(indent=2), content_name="raw LLM JSON response" )
+        context.save_to("{name}_coder_text_{iter}.md", code_response["text"], content_name="raw LLM text")
 
-    # Check if LLM actually executed code
-    response_obj = code_response["full"]
-    if hasattr(response_obj, 'candidates') and response_obj.candidates:
-        parts = response_obj.candidates[0].content.parts
-        for part in parts:
-            if hasattr(part, 'code_execution_result') and part.code_execution_result:
-                context.current.add_flag('llm_executed')
-                break
+        # Check if LLM actually executed code
+        response_obj = code_response["full"]
+        if hasattr(response_obj, 'candidates') and response_obj.candidates:
+            parts = response_obj.candidates[0].content.parts
+            for part in parts:
+                if hasattr(part, 'code_execution_result') and part.code_execution_result:
+                    context.current.add_flag('llm_executed')
+                    break
 
-    if not 'llm_executed' in context.current.flags:
-        print("⚠️  WARNING: LLM did not execute code (the code may be non-runnable)")
+        if not 'llm_executed' in context.current.flags:
+            print("⚠️  WARNING: LLM did not execute code (the code may be non-runnable)")
 
-    text = code_response["text"]
-    code_blocks = find_code_blocks(text, delimiter="~~~", language="python")
-    diff_blocks = find_code_blocks(text, delimiter="~~~", language="diff")
+        text = code_response["text"]
+        code_blocks = find_code_blocks(text, delimiter="~~~", language="python")
+        diff_blocks = find_code_blocks(text, delimiter="~~~", language="diff")
+    except Exception as e:
+        print(f"❌ Error during code generation: {e}")
+        return False
 
     if code_blocks:
         context.save_to("{name}_coder_code_{iter}.py", code_blocks[0], content_name="code block")
@@ -337,20 +350,26 @@ def execute(config: dict, context: Context):
     context.current.program_output = program_output
 
 def fix_syntax_errors(config: dict, context: Context):
-    # Run syntax fix step. The model does not know anything about the goals, it has to merely fix syntax issues
-    print("\n🚨 SyntaxError or IndentationError detected in program output. Running syntax fix iteration...")
-    context.current.add_flag("syntax_fix")
-    # load prompt for syntax fix
-    syntax_fix_prompt = load_file("scripts/syntax fix.md")
-    syntax_fix_prompt_formatted = syntax_fix_prompt.format_map({
-        "previous_code": to_string(context.current.code),
-        "program_output": to_string(context.current.program_output)
-    })
-    context.save_to("{name}_syntax_fix_prompt_v{iter}.md", syntax_fix_prompt_formatted, content_name="syntax fix prompt")
-    syntax_fix_response = llm_query(syntax_fix_prompt_formatted, model=config["coder_model"]) # Or utility_model?
-    syntax_fix_text = syntax_fix_response["text"]
-    context.save_to("{name}_syntax_fix_response_v{iter}.md", syntax_fix_text, content_name="syntax fix response")
-    diff_blocks = find_code_blocks(syntax_fix_text, delimiter="~~~", language="diff")
+    try:
+        # Run syntax fix step. The model does not know anything about the goals, it has to merely fix syntax issues
+        print("\n🚨 SyntaxError or IndentationError detected in program output. Running syntax fix iteration...")
+        context.current.add_flag("syntax_fix")
+        # load prompt for syntax fix
+        syntax_fix_prompt = load_file("scripts/syntax fix.md")
+        syntax_fix_prompt_formatted = syntax_fix_prompt.format_map({
+            "previous_code": to_string(context.current.code),
+            "program_output": to_string(context.current.program_output)
+        })
+        context.save_to("{name}_syntax_fix_prompt_v{iter}.md", syntax_fix_prompt_formatted, content_name="syntax fix prompt")
+        syntax_fix_response = llm_query(syntax_fix_prompt_formatted, model=config["coder_model"]) # Or utility_model?
+        context.save_to("{name}_syntax_fix_response_v{iter}.json", syntax_fix_response["full"].model_dump_json(indent=2), content_name="syntax fix response")
+        syntax_fix_text = syntax_fix_response["text"]
+        context.save_to("{name}_syntax_fix_response_v{iter}.md", syntax_fix_text, content_name="syntax fix response")
+        diff_blocks = find_code_blocks(syntax_fix_text, delimiter="~~~", language="diff")
+    except Exception as e:
+        print(f"❌ Error during syntax fix generation: {e}")
+        return False
+
     if diff_blocks:
         print("🛠️ Applying syntax fix diff patch to current code.")
         patch_lines = clean_code_block(diff_blocks[0])
@@ -451,7 +470,7 @@ def create_filename(basename: str) -> str:
     return f"{basename}_{random_suffix}"
 
 # --- Main Agent Function ---
-def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goals: bool = True) -> str:
+def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goals: bool = True, flag_diffs: bool = True) -> str:
     max_iterations = task_config["max_rounds"]
     
     print("\n🎯 Use Case:")
@@ -488,7 +507,7 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
         context.start_iteration()
 
         # Run coding stage
-        if not code(task_config, context):
+        if not code(task_config, context, use_diffs=flag_diffs):
             context.erase_iteration()
             print("❌ Model generated some bad output, repeating iteration")
             continue
@@ -545,7 +564,11 @@ if __name__ == "__main__":
                         help="Refine use case and goals before starting (default)")
     parser.add_argument("--no-refine-goals", dest="refine_goals", action="store_false",
                         help="Skip goals refinement, use original goals as-is")
-    parser.set_defaults(refine_goals=True)
+    parser.add_argument("--diffs", dest="diffs", action="store_true", 
+                        help="Use unified diffs for coder output (default)")
+    parser.add_argument("--no-diffs", dest="diffs", action="store_false",
+                        help="Do not use unified diffs for coder output")
+    parser.set_defaults(refine_goals=True, diffs=True)
     
     args = parser.parse_args()
     config_name = args.config_name
@@ -559,5 +582,5 @@ if __name__ == "__main__":
     
     use_case_input = load_file(f"tasks/{config_name}/hl_spec.md")
     goals_input = load_file(f"tasks/{config_name}/ac.md")
-    run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals)
+    run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals, flag_diffs=args.diffs)
     

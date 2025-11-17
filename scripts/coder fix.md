@@ -22,42 +22,48 @@ If after your fixes the code is runnable, execute it to verify the changes work.
 # Previously generated code
 
 ~~~python
-{previous.code}
+{code}
 ~~~
 
 # Execution results from the previous version
 
-{previous.program_output}
+{output}
 
 # Feedback on previous version
 
-{previous.feedback}
-
+{feedback}
 
 # Output formatting
 
 You must provide a response that has a 2-part format:
 
 1. **Part 1: Reasoning text.** Concise summary (max 5 sentences or 60 words).
-2. **Part 2: Diff block.** The code changes in unified diff format.
+?a 2. **Part 2: Diff block.** The code changes in unified diff format.
+?b 2. **Part 2: Code block.** The complete Python code.
 
 **STRICT FORMAT RULES:**
 - The reasoning text is mandatory.
-- The diff block is mandatory.
-- Use diff code block for the diff, start with empty line followed by "~~~diff" and end with "~~~".
-- **CRITICAL: Use TRIPLE TILDES (~) not backticks (`) for the diff block**
+?a - The diff block is mandatory.
+?a - Use diff code block for the diff, start with empty line followed by "~~~diff" and end with "~~~".
+?a - **CRITICAL: Use TRIPLE TILDES (~) not backticks (`) for the diff block**
+?b - The code block is mandatory.
+?b - Use python code block for the code (~~~python), start with empty line followed by "~~~python" and end with "~~~".
+?b - **CRITICAL: Use TRIPLE TILDES (~) not backticks (`) for the python code block**
 - **CRITICAL: DO NOT use TRIPLE TILDES inside the code**
 
 ## Example format
 
 This is the reasoning text.
 
-~~~diff
---- a/main.py
-+++ b/main.py
-@@ ... @@
- def hello():
--    print("old")
-+    print("new")
-     return True
-~~~
+?a ~~~diff
+?a --- a/main.py
+?a +++ b/main.py
+?a @@ ... @@
+?a  def hello():
+?a -    print("old")
+?a +    print("new")
+?a      return True
+?a ~~~
+?b ~~~python
+?b print("Hello world")
+?b ~~~
