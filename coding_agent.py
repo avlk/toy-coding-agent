@@ -19,7 +19,6 @@ from pathlib import Path
 from google import genai
 from google.genai import errors
 from patch import patch_code, is_unified_diff
-from md_parser import find_code_blocks
 from sandbox_execution import execute_sandboxed
 from token_tracker import TokenUsageTracker
 from utils import *

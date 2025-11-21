@@ -169,6 +169,7 @@ def code_quality_gate(code) -> bool:
     max_same_lines = 100 # model often hallucinates returning the same line until MAX_TOKENS
 
     # Return False if there are too long lines or there are more than X consecutive lines with the same content
+    same_line_count = 0
     for i, line in enumerate(lines):
         if len(line) > max_line_length:
             print(f"❌ Line {i+1} exceeds max length ({max_line_length})")
@@ -183,4 +184,16 @@ def code_quality_gate(code) -> bool:
 
     return True
 
+def find_code_blocks(markdown_text, delimiter="~~~", language="python"):
+    # This function extracts code blocks from the given Markdown text
+    # that use the specified delimiter and language.
+    # The code blocks starts with delimiter + language and end with the same delimiter or end of line.
+    # It returns a list of code blocks found.
+    
+    pattern = re.compile(
+        rf'{re.escape(delimiter)}{language}\n(.*?)(?:\n{re.escape(delimiter)}|$)',
+        re.DOTALL
+    )
+    code_blocks = pattern.findall(markdown_text)
+    return code_blocks
 
