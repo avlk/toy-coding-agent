@@ -42,41 +42,50 @@ class Iteration:
 
     def add_flag(self, name: str):
         self.flags.add(name)
+    
+    def get_score(self) -> int:
+        """Returns the score, or 0 if not set"""
+        return self.score if self.score is not None else 0
 
 class Context:
     def __init__(self, filename, use_case, goals):
         self.filename = filename
         self.use_case = use_case
         self.goals = goals
-        self.iterations = []
+        self._iterations = []
         self.current_iteration = None
     
     @property
+    def iterations(self):
+        """Returns a copy of the iterations list"""
+        return self._iterations.copy()
+    
+    @property
     def previous(self):
-        if len(self.iterations):
-            return self.iterations[-1]
+        if len(self._iterations):
+            return self._iterations[-1]
         return None
 
     @property
     def current(self):
         if not self.current_iteration:
-            self.start_iteration()
+            raise RuntimeError("Start an iteration before accessing current")
         return self.current_iteration
 
     @property
     def iter_no(self):
-        return len(self.iterations) + 1
+        return len(self._iterations) + 1
 
     def start_iteration(self):
         if self.current_iteration:
-            self.iterations.append(self.current_iteration)
+            self._iterations.append(self.current_iteration)
         self.current_iteration = Iteration()
 
     def erase_iteration(self):
         self.current_iteration = None
 
     def trim_iterations(self, limit_by):
-        self.iterations = self.iterations[:limit_by]
+        self._iterations = self._iterations[:limit_by]
         self.current_iteration = None
 
     def save_to(self, filename_template, content, content_name=None):
@@ -430,9 +439,9 @@ def progress_check(context: Context) -> int:
     Checks if there is progress in scores.
     If there is no progress over last 3 iterations, returns the number of iteration to return to.
     """
-    # Calculate score sequence
-    scores = [x.score for x in context.iterations]
-    scores.append(context.current.score)
+    # Calculate score sequence - use get_score() to handle None
+    scores = [x.get_score() for x in context.iterations]
+    scores.append(context.current.get_score())
     if len(scores) < 3:
         return None  # Not enough data to determine
     # Find last best score index (rightmost), and if it's older than 3 iterations, return that index
