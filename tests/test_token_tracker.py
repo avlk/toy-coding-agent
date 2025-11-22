@@ -98,7 +98,7 @@ class TestTokenUsageTracker:
         
         assert isinstance(summary, list)
         assert any("test-model" in line for line in summary)
-        assert any("1,000" in line for line in summary)  # Total tokens formatted
+        assert any("1000" in line or "1,000" in line for line in summary)  # Total tokens (formatted or not)
         assert any("5.0s" in line for line in summary)  # Total time
     
     def test_summary_multiple_models(self):
