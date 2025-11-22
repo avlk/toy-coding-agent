@@ -85,8 +85,13 @@ class Context:
         self.current_iteration = None
 
     def trim_iterations(self, limit_by):
+        """Trim iterations to keep only the first limit_by iterations.
+        The last kept iteration becomes the current iteration."""
         self._iterations = self._iterations[:limit_by]
-        self.current_iteration = None
+        if self._iterations:
+            self.current_iteration = self._iterations.pop()
+        else:
+            self.current_iteration = None
 
     def save_to(self, filename_template, content, content_name=None):
         """
@@ -301,6 +306,8 @@ def code(config: dict, context: Context, use_diffs: bool = True):
         diff_blocks = find_code_blocks(text, delimiter="~~~", language="diff")
     except Exception as e:
         print(f"❌ Error during code generation: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
     if code_blocks:

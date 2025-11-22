@@ -157,7 +157,7 @@ class TestContext:
         assert ctx.current_iteration is None  # Cleared
     
     def test_trim_iterations(self):
-        """Test trim_iterations keeps only first N"""
+        """Test trim_iterations keeps N-1 in iterations and Nth becomes current"""
         ctx = Context(filename='test', use_case='UC', goals='Goals')
         # Create 10 iterations using start_iteration
         for i in range(10):
@@ -167,22 +167,27 @@ class TestContext:
         
         ctx.trim_iterations(3)
         
-        assert len(ctx.iterations) == 3
+        # Should keep first 2 in iterations, and 3rd becomes current
+        assert len(ctx.iterations) == 2
         assert ctx.iterations[0].code == "code_0"
         assert ctx.iterations[1].code == "code_1"
-        assert ctx.iterations[2].code == "code_2"
+        assert ctx.current.code == "code_2"
     
     def test_trim_iterations_when_less_than_n(self):
-        """Test trim_iterations does nothing when iterations < n"""
+        """Test trim_iterations when n > iterations length"""
         ctx = Context(filename='test', use_case='UC', goals='Goals')
         # Create 2 iterations
         ctx.start_iteration()
+        ctx.current.code = "code_0"
         ctx.start_iteration()
+        ctx.current.code = "code_1"
         ctx.start_iteration()  # Move both to iterations list
         
-        ctx.trim_iterations(5)
+        ctx.trim_iterations(5)  # Ask for 5 but only have 2
         
-        assert len(ctx.iterations) == 2
+        # Should keep first one in iterations, second becomes current
+        assert len(ctx.iterations) == 1
+        assert ctx.current.code == "code_1"
     
     def test_save_to_with_name_placeholder(self):
         """Test save_to replaces {name} placeholder and saves file"""
