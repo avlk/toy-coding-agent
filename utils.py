@@ -5,6 +5,7 @@ This module contains general-purpose utilities that don't depend on
 LLM or agent-specific logic.
 """
 
+import re
 import random
 from pathlib import Path
 

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils import (
     to_lines, to_string, select_variant, format_goals,
-    clean_code_block, code_quality_gate
+    clean_code_block, code_quality_gate, find_code_blocks
 )
 
 
@@ -181,6 +181,89 @@ class TestCodeQualityGate:
     def test_string_input(self):
         code = "def foo():\n    return 42"
         assert code_quality_gate(code) == True
+
+
+class TestFindCodeBlocks:
+    """Tests for find_code_blocks() function."""
+    
+    def test_single_python_block_with_tildes(self):
+        """Test extracting a single Python block with ~~~ delimiter"""
+        markdown = "~~~python\nprint('hello')\n~~~"
+        result = find_code_blocks(markdown, delimiter="~~~", language="python")
+        
+        assert len(result) == 1
+        assert result[0] == "print('hello')"
+    
+    def test_single_python_block_with_backticks(self):
+        """Test extracting a single Python block with ``` delimiter"""
+        markdown = "```python\nprint('world')\n```"
+        result = find_code_blocks(markdown, delimiter="```", language="python")
+        
+        assert len(result) == 1
+        assert result[0] == "print('world')"
+    
+    def test_multiple_python_blocks(self):
+        """Test extracting multiple Python blocks"""
+        markdown = "~~~python\ncode1\n~~~\nSome text\n~~~python\ncode2\n~~~"
+        result = find_code_blocks(markdown, delimiter="~~~", language="python")
+        
+        assert len(result) == 2
+        assert result[0] == "code1"
+        assert result[1] == "code2"
+    
+    def test_diff_language(self):
+        """Test extracting diff blocks"""
+        markdown = "~~~diff\n-old line\n+new line\n~~~"
+        result = find_code_blocks(markdown, delimiter="~~~", language="diff")
+        
+        assert len(result) == 1
+        assert result[0] == "-old line\n+new line"
+    
+    def test_no_matching_blocks(self):
+        """Test returns empty list when no matching blocks found"""
+        markdown = "~~~javascript\ncode\n~~~"
+        result = find_code_blocks(markdown, delimiter="~~~", language="python")
+        
+        assert result == []
+    
+    def test_block_without_closing_delimiter(self):
+        """Test extracts block that extends to end of string"""
+        markdown = "~~~python\nprint('no closing')"
+        result = find_code_blocks(markdown, delimiter="~~~", language="python")
+        
+        assert len(result) == 1
+        assert result[0] == "print('no closing')"
+    
+    def test_multiline_code_block(self):
+        """Test extracts multiline code correctly"""
+        code = "def hello():\n    print('world')\n    return 42"
+        markdown = f"~~~python\n{code}\n~~~"
+        result = find_code_blocks(markdown, delimiter="~~~", language="python")
+        
+        assert len(result) == 1
+        assert result[0] == code
+    
+    def test_empty_code_block(self):
+        """Test handles empty code blocks"""
+        markdown = "~~~python\n\n~~~"
+        result = find_code_blocks(markdown, delimiter="~~~", language="python")
+        
+        assert len(result) == 1
+        assert result[0] == ""
+    
+    def test_mixed_delimiters_and_languages(self):
+        """Test only extracts blocks matching both delimiter and language"""
+        markdown = "~~~python\npy1\n~~~\n```python\npy2\n```\n~~~diff\ndiff1\n~~~"
+        
+        # Should only get ~~~ + python
+        result = find_code_blocks(markdown, delimiter="~~~", language="python")
+        assert len(result) == 1
+        assert result[0] == "py1"
+        
+        # Should only get ``` + python
+        result = find_code_blocks(markdown, delimiter="```", language="python")
+        assert len(result) == 1
+        assert result[0] == "py2"
 
 
 if __name__ == "__main__":
