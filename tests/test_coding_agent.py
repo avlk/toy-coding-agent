@@ -11,7 +11,11 @@ from unittest.mock import Mock, patch, mock_open
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from coding_agent import Iteration, Context, load_task_config, progress_check, format_final_code, create_filename
+from coding_agent import (
+    Iteration, Context, load_task_config, progress_check, 
+    format_final_code, create_filename, refine_goals, goals_met,
+    code, fix_syntax_errors, feedback
+)
 
 
 class TestIteration:
@@ -504,3 +508,479 @@ class TestCreateFilename:
             suffix = result.replace(f'{basename}_', '')
             assert len(suffix) == 4
             assert suffix.isdigit()
+
+
+class TestRefineGoals:
+    """Tests for refine_goals function (with mocked llm_query)"""
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_updates_context_with_refined_values(self, mock_load_file, mock_llm_query):
+        """Test that refine_goals updates context with refined use case and goals"""
+        mock_load_file.return_value = "Template: {use_case}, {goals}"
+        mock_llm_query.return_value = {
+            "text": json.dumps({
+                "refined_use_case": "Build a QR code generator",
+                "refined_goals": ["Goal 1", "Goal 2"]
+            })
+        }
+        
+        ctx = Context(filename='test', use_case='Make QR codes', goals='make qr codes')
+        config = {"reviewer_model": "test-model"}
+        
+        result = refine_goals(config, ctx)
+        
+        assert result is True
+        assert ctx.use_case == "Build a QR code generator"
+        assert ctx.goals == ["Goal 1", "Goal 2"]
+        mock_llm_query.assert_called_once()
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_saves_refined_files(self, mock_load_file, mock_llm_query):
+        """Test that refine_goals saves refined use case and goals files"""
+        mock_load_file.return_value = "Template"
+        mock_llm_query.return_value = {
+            "text": json.dumps({
+                "refined_use_case": "Refined UC",
+                "refined_goals": ["G1", "G2"]
+            })
+        }
+        
+        ctx = Context(filename='myfile', use_case='UC', goals='goals')
+        config = {"reviewer_model": "model"}
+        
+        with patch.object(ctx, 'save_to') as mock_save:
+            refine_goals(config, ctx)
+            
+            # Should save both refined use case and goals
+            assert mock_save.call_count == 2
+            calls = mock_save.call_args_list
+            assert calls[0][0][0] == "{name}_refined_use_case.md"
+            assert calls[0][0][1] == "Refined UC"
+            assert calls[1][0][0] == "{name}_refined_goals.md"
+            assert calls[1][0][1] == ["G1", "G2"]
+
+
+class TestGoalsMet:
+    """Tests for goals_met function (with mocked llm_query)"""
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_returns_true_when_goals_met(self, mock_load_file, mock_llm_query):
+        """Test returns (True, score) when result is 'Yes'"""
+        mock_load_file.return_value = "Check: {goals}, {feedback_text}"
+        mock_llm_query.return_value = {
+            "text": json.dumps({"result": "Yes", "score": 85})
+        }
+        
+        ctx = Context(filename='test', use_case='UC', goals='Goals')
+        ctx.start_iteration()
+        ctx.current.feedback = "Good work"
+        config = {"utility_model": "model"}
+        
+        met, score = goals_met(config, ctx)
+        
+        assert met is True
+        assert score == 85
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_returns_false_when_goals_not_met(self, mock_load_file, mock_llm_query):
+        """Test returns (False, score) when result is 'No'"""
+        mock_load_file.return_value = "Check goals"
+        mock_llm_query.return_value = {
+            "text": json.dumps({"result": "No", "score": 40})
+        }
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.feedback = "Needs work"
+        config = {"utility_model": "model"}
+        
+        met, score = goals_met(config, ctx)
+        
+        assert met is False
+        assert score == 40
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_handles_markdown_code_blocks(self, mock_load_file, mock_llm_query):
+        """Test handles JSON wrapped in markdown code blocks"""
+        mock_load_file.return_value = "Template"
+        # Response wrapped in code block
+        mock_llm_query.return_value = {
+            "text": "```json\n" + json.dumps({"result": "yes", "score": 90}) + "\n```"
+        }
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.feedback = "feedback"
+        config = {"utility_model": "model"}
+        
+        met, score = goals_met(config, ctx)
+        
+        assert met is True
+        assert score == 90
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_returns_false_on_json_parse_error(self, mock_load_file, mock_llm_query):
+        """Test returns (False, 0) when JSON parsing fails"""
+        mock_load_file.return_value = "Template"
+        mock_llm_query.return_value = {
+            "text": "Invalid JSON response"
+        }
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.feedback = "feedback"
+        config = {"utility_model": "model"}
+        
+        met, score = goals_met(config, ctx)
+        
+        assert met is False
+        assert score == 0
+
+
+class TestCode:
+    """Tests for code function (with mocked llm_query)"""
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_uses_create_script_for_first_iteration(self, mock_load_file, mock_llm_query):
+        """Test uses 'coder create.md' script when no previous iteration"""
+        mock_load_file.return_value = "Create: {use_case}, {goals}"
+        mock_llm_query.return_value = {
+            "text": "~~~python\nprint('hello')\n~~~",
+            "full": Mock(candidates=[Mock(content=Mock(parts=[]))])
+        }
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        config = {"coder_model": "model"}
+        
+        with patch.object(ctx, 'save_to'):
+            code(config, ctx)
+        
+        # Check that load_file was called with create script
+        assert any('coder create.md' in str(call) for call in mock_load_file.call_args_list)
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_uses_fix_script_for_subsequent_iterations(self, mock_load_file, mock_llm_query):
+        """Test uses 'coder fix.md' script when previous iteration exists"""
+        mock_load_file.return_value = "Fix: {code}, {feedback}"
+        mock_llm_query.return_value = {
+            "text": "~~~python\nprint('fixed')\n~~~",
+            "full": Mock(candidates=[Mock(content=Mock(parts=[]))])
+        }
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        # Create first iteration
+        ctx.start_iteration()
+        ctx.current.code = "old code"
+        ctx.current.feedback = "needs fix"
+        # Start second iteration
+        ctx.start_iteration()
+        config = {"coder_model": "model"}
+        
+        with patch.object(ctx, 'save_to'):
+            code(config, ctx)
+        
+        # Check that load_file was called with fix script
+        assert any('coder fix.md' in str(call) for call in mock_load_file.call_args_list)
+    
+    @patch('coding_agent.find_code_blocks')
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_extracts_python_code_blocks(self, mock_load_file, mock_llm_query, mock_find_blocks):
+        """Test extracts python code from ~~~ delimited blocks"""
+        mock_load_file.return_value = "Template"
+        code_text = "def hello():\n    print('world')"
+        mock_llm_query.return_value = {
+            "text": f"~~~python\n{code_text}\n~~~",
+            "full": Mock(candidates=[Mock(content=Mock(parts=[]))])
+        }
+        # Mock find_code_blocks to return the code block
+        mock_find_blocks.side_effect = lambda text, delimiter, language: \
+            [[code_text]] if language == "python" else []
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        config = {"coder_model": "model"}
+        
+        with patch.object(ctx, 'save_to'):
+            result = code(config, ctx)
+        
+        assert result is True
+        assert code_text in '\n'.join(ctx.current.code)
+    
+    @patch('coding_agent.find_code_blocks')
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    @patch('coding_agent.patch_code')
+    def test_applies_diff_patch_to_previous_code(self, mock_patch, mock_load_file, mock_llm_query, mock_find_blocks):
+        """Test applies diff blocks to previous iteration's code"""
+        mock_load_file.return_value = "Template"
+        diff_text = "--- a/file.py\n+++ b/file.py\n@@ -1,1 +1,1 @@\n-old\n+new"
+        mock_llm_query.return_value = {
+            "text": f"~~~diff\n{diff_text}\n~~~",
+            "full": Mock(candidates=[Mock(content=Mock(parts=[]))])
+        }
+        # Mock find_code_blocks to return diff block
+        mock_find_blocks.side_effect = lambda text, delimiter, language: \
+            [] if language == "python" else [[diff_text]]
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.code = ["old line"]
+        ctx.start_iteration()
+        config = {"coder_model": "model"}
+        
+        with patch.object(ctx, 'save_to'):
+            code(config, ctx, use_diffs=True)
+        
+        # Verify patch_code was called
+        mock_patch.assert_called_once()
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_sets_llm_executed_flag(self, mock_load_file, mock_llm_query):
+        """Test sets 'llm_executed' flag when LLM executed code"""
+        mock_load_file.return_value = "Template"
+        
+        # Create mock with code_execution_result
+        mock_part = Mock()
+        mock_part.code_execution_result = Mock(outcome="SUCCESS")
+        mock_candidate = Mock()
+        mock_candidate.content = Mock(parts=[mock_part])
+        mock_response = Mock(candidates=[mock_candidate])
+        
+        mock_llm_query.return_value = {
+            "text": "~~~python\nprint('test')\n~~~",
+            "full": mock_response
+        }
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        config = {"coder_model": "model"}
+        
+        with patch.object(ctx, 'save_to'):
+            code(config, ctx)
+        
+        assert 'llm_executed' in ctx.current.flags
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_returns_false_on_exception(self, mock_load_file, mock_llm_query):
+        """Test returns False when exception occurs"""
+        mock_load_file.return_value = "Template"
+        mock_llm_query.side_effect = Exception("LLM error")
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        config = {"coder_model": "model"}
+        
+        result = code(config, ctx)
+        
+        assert result is False
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    @patch('coding_agent.code_quality_gate')
+    def test_returns_false_when_quality_gate_fails(self, mock_quality, mock_load_file, mock_llm_query):
+        """Test returns False when code_quality_gate fails"""
+        mock_load_file.return_value = "Template"
+        mock_llm_query.return_value = {
+            "text": "~~~python\nprint('x' * 500)\n~~~",  # Long line
+            "full": Mock(candidates=[Mock(content=Mock(parts=[]))])
+        }
+        mock_quality.return_value = False  # Quality gate fails
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        config = {"coder_model": "model"}
+        
+        with patch.object(ctx, 'save_to'):
+            result = code(config, ctx)
+        
+        assert result is False
+
+
+class TestFixSyntaxErrors:
+    """Tests for fix_syntax_errors function (with mocked llm_query)"""
+    
+    @patch('coding_agent.find_code_blocks')
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    @patch('coding_agent.patch_code')
+    def test_applies_diff_patch(self, mock_patch, mock_load_file, mock_llm_query, mock_find_blocks):
+        """Test applies diff patch to current code"""
+        mock_load_file.return_value = "Fix: {previous_code}, {program_output}"
+        diff_text = "--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n-bad\n+good"
+        mock_llm_query.return_value = {
+            "text": f"~~~diff\n{diff_text}\n~~~",
+            "full": Mock()
+        }
+        # Mock find_code_blocks to return diff block
+        mock_find_blocks.return_value = [[diff_text]]
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.code = ["bad syntax"]
+        ctx.current.program_output = ["SyntaxError"]
+        config = {"reviewer_model": "model"}
+        
+        with patch.object(ctx, 'save_to'):
+            result = fix_syntax_errors(config, ctx)
+        
+        assert result is True
+        mock_patch.assert_called_once()
+        assert 'syntax_fix' in ctx.current.flags
+    
+    @patch('coding_agent.find_code_blocks')
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_handles_triple_backtick_delimiter(self, mock_load_file, mock_llm_query, mock_find_blocks):
+        """Test handles both ~~~ and ``` delimiters for diff blocks"""
+        mock_load_file.return_value = "Template"
+        diff_text = "--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n-old\n+new"
+        # Use ``` instead of ~~~
+        mock_llm_query.return_value = {
+            "text": f"```diff\n{diff_text}\n```",
+            "full": Mock()
+        }
+        # First call returns empty (~~~ delimiter), second call returns diff (``` delimiter)
+        mock_find_blocks.side_effect = [[], [[diff_text]]]
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.code = ["old"]
+        ctx.current.program_output = ["error"]
+        config = {"reviewer_model": "model"}
+        
+        with patch.object(ctx, 'save_to'):
+            with patch('coding_agent.patch_code'):
+                result = fix_syntax_errors(config, ctx)
+        
+        assert result is True
+    
+    @patch('coding_agent.find_code_blocks')
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_returns_false_when_no_diff_block(self, mock_load_file, mock_llm_query, mock_find_blocks):
+        """Test returns False when no diff block found in response"""
+        mock_load_file.return_value = "Template"
+        mock_llm_query.return_value = {
+            "text": "No diff block here, just text",
+            "full": Mock()
+        }
+        # Both calls return empty (no diff blocks found)
+        mock_find_blocks.return_value = []
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.code = ["code"]
+        ctx.current.program_output = ["error"]
+        config = {"reviewer_model": "model"}
+        
+        with patch.object(ctx, 'save_to'):
+            result = fix_syntax_errors(config, ctx)
+        
+        assert result is False
+    
+    @patch('coding_agent.find_code_blocks')
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_saves_syntax_fixed_file(self, mock_load_file, mock_llm_query, mock_find_blocks):
+        """Test saves syntax_fixed.py file"""
+        mock_load_file.return_value = "Template"
+        diff_text = "--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n-bad\n+good"
+        mock_llm_query.return_value = {
+            "text": f"~~~diff\n{diff_text}\n~~~",
+            "full": Mock()
+        }
+        mock_find_blocks.return_value = [[diff_text]]
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.code = ["bad"]
+        ctx.current.program_output = ["error"]
+        config = {"reviewer_model": "model"}
+        
+        with patch.object(ctx, 'save_to') as mock_save:
+            with patch('coding_agent.patch_code'):
+                fix_syntax_errors(config, ctx)
+        
+        # Should save syntax_fixed.py file
+        save_calls = [call[0][0] for call in mock_save.call_args_list]
+        assert any('syntax_fixed.py' in call for call in save_calls)
+
+
+class TestFeedback:
+    """Tests for feedback function (with mocked llm_query)"""
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_stores_feedback_in_context(self, mock_load_file, mock_llm_query):
+        """Test stores feedback in context.current.feedback"""
+        mock_load_file.return_value = "Review: {code}, {code_output}"
+        feedback_text = "The code works well but could be improved..."
+        mock_llm_query.return_value = {
+            "text": feedback_text
+        }
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.code = ["print('hello')"]
+        ctx.current.program_output = ["hello"]
+        config = {"reviewer_model": "model"}
+        
+        with patch.object(ctx, 'save_to'):
+            result = feedback(config, ctx)
+        
+        assert result is True
+        assert ctx.current.feedback == feedback_text
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_saves_review_file(self, mock_load_file, mock_llm_query):
+        """Test saves review file"""
+        mock_load_file.return_value = "Template"
+        mock_llm_query.return_value = {
+            "text": "Good code"
+        }
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.code = ["code"]
+        ctx.current.program_output = ["output"]
+        config = {"reviewer_model": "model"}
+        
+        with patch.object(ctx, 'save_to') as mock_save:
+            feedback(config, ctx)
+        
+        # Should save review file
+        mock_save.assert_called_once()
+        assert mock_save.call_args[0][0] == "{name}_review_v{iter}.txt"
+        assert mock_save.call_args[0][1] == "Good code"
+    
+    @patch('coding_agent.llm_query')
+    @patch('coding_agent.load_file')
+    def test_returns_false_when_no_feedback(self, mock_load_file, mock_llm_query):
+        """Test returns False when feedback is empty"""
+        mock_load_file.return_value = "Template"
+        mock_llm_query.return_value = {
+            "text": ""  # Empty feedback
+        }
+        
+        ctx = Context(filename='test', use_case='UC', goals='G')
+        ctx.start_iteration()
+        ctx.current.code = ["code"]
+        ctx.current.program_output = ["output"]
+        config = {"reviewer_model": "model"}
+        
+        result = feedback(config, ctx)
+        
+        assert result is False
