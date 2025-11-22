@@ -1,0 +1,6 @@
+# Production dependencies
+google-genai>=1.0.0
+python-Levenshtein>=0.20.0
+
+# Development dependencies
+pytest>=9.0.0
