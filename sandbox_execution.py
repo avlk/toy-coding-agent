@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 
 # Methods for automatic sandbox selection, subprocess fallback is commented out for security reasons
-# If you need subprocess fallback, specifiyically set method='subprocess' when calling execute_sandboxed
+# If you need subprocess fallback, specifically set method='subprocess' when calling execute_sandboxed
 AUTO_METHODS = [
     'firejail', 
     'docker',
@@ -16,7 +16,7 @@ AUTO_METHODS = [
 ]
 
 def _make_result(success: bool, stdout: str, stderr: str, exit_code: int, method: str) -> dict:
-    """Helper to create consistent result dictionaries."""
+    """Helper function to create consistent result dictionaries."""
     return {
         'success': success,
         'stdout': stdout,

@@ -105,6 +105,6 @@ class TokenUsageTracker:
         return lines
     
     def print_summary(self):
-        """Print aggregated token usage statistics for all models."""
+        """Print the aggregated token usage statistics for all models."""
         for line in self.summary():
             print(line)

@@ -129,7 +129,7 @@ def save_to_file(filename: str, content, content_name="output") -> str:
 def clean_code_block(code) -> list:
     """
     Remove code block markers (``` or ~~~) from beginning and end.
-    Also it removes empty lines in sequences if there are more than 2 consecutive empty lines.
+    Also removes empty lines in sequences if there are more than 2 consecutive empty lines.
     
     Args:
         code: Either a string or list of lines
@@ -162,12 +162,12 @@ def clean_code_block(code) -> list:
 
 def code_quality_gate(code) -> bool:
     """
-    Returns True if the code meets quality standards, and False otherwise
+    Returns True if the code meets quality standards, False otherwise
     """
     lines = to_lines(code)
 
     max_line_length = 2048 # model often returns very long lines with no meaning, repeating same one or two characters
-    max_same_lines = 100 # model often hallucinates returning the same line until MAX_TOKENS
+    max_same_lines = 100 # model often hallucinates, returning the same line until MAX_TOKENS
 
     # Return False if there are too long lines or there are more than X consecutive lines with the same content
     same_line_count = 0
@@ -186,11 +186,12 @@ def code_quality_gate(code) -> bool:
     return True
 
 def find_code_blocks(markdown_text, delimiter="~~~", language="python"):
-    # This function extracts code blocks from the given Markdown text
-    # that use the specified delimiter and language.
-    # The code blocks starts with delimiter + language and end with the same delimiter or end of line.
-    # It returns a list of code blocks found.
-    
+    """ 
+        The function extracts code blocks from the given Markdown text.  
+        The code blocks start with delimiter + language and end 
+        with the same delimiter or the end of the text.
+        Returns a list of code blocks found.
+    """
     pattern = re.compile(
         rf'{re.escape(delimiter)}{language}\n(.*?)(?:\n{re.escape(delimiter)}|$)',
         re.DOTALL

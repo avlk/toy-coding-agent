@@ -59,7 +59,7 @@ class Hunk:
                 self.replace.append(line_content)
 
         # Adjust starting and trailing context, and trim match/replace lists accordingly
-        # LLM's may add too much context, but it can also create pairs of +/- lines that do not differ
+        # LLMs may add too much context, but it can also create pairs of +/- lines that do not differ
         # We will keep at most MAX_STARTING_CONTEXT lines of context at the start and MAX_TRAILING_CONTEXT lines at the end
         # To do this, we match actual self.match and self.replace lines from the start and end
         # and trim the rest
