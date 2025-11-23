@@ -1,6 +1,7 @@
 - Code simple to understand
 - Functionally correct
-- Handles comprehensive edge cases
 - Computationally efficient
-- Prints the image
-- Rendered image is correct
+- Prints the image with a ball and a shadow
+- Rendered image has correct dimensions
+- The ball body is N/2 lines high and N characters wide 
+- Important geometry-related assumptions are clearly stated in the code comments
