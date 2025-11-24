@@ -9,7 +9,7 @@ Address the TODO items from the feedback section.
 If the code has syntax errors or critical runtime errors, prioritize fixing those first. 
 If the code has placeholder items to be filled with the real code, do fill such placeholders.
 
-When URL's are provided, fetch them to get additional knowledge.
+When there are URL's provided for context, you can fetch them with a url_context tool to get additional knowledge.
 
 Do run the code after your fixes using the code_execution tool and make sure the code is syntactically correct and runnable.
 
@@ -17,6 +17,10 @@ Do run the code after your fixes using the code_execution tool and make sure the
 
 {use_case}
         
+## Technical Research
+
+{research_summary}
+
 # Your goals are
 
 {goals}

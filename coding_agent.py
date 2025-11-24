@@ -52,9 +52,10 @@ class Context:
         self.filename = filename
         self.use_case = use_case
         self.goals = goals
+        self.research_summary = ""
         self._iterations = []
         self.current_iteration = None
-    
+
     @property
     def iterations(self):
         """Returns a copy of the iterations list"""
@@ -116,8 +117,24 @@ llm_config_coder = genai.types.GenerateContentConfig(
     temperature=0.3,
     tools=[
         genai.types.Tool(code_execution=genai.types.ToolCodeExecution), 
-        genai.types.Tool(google_search=genai.types.GoogleSearch())
+        genai.types.Tool(google_search=genai.types.GoogleSearch()),
+        genai.types.Tool(url_context=genai.types.UrlContext()),
+        # {"url_context": {}}
+        # {"google_search": {}}
+        # {"url_context": {}},
+        # {'google_search': {}},
+        # {'code_execution': {}},
     ],
+
+)
+
+llm_config_research = genai.types.GenerateContentConfig(
+    temperature=0,
+    tools=[
+        {"url_context": {}},
+        {"google_search": {}}
+    ],
+    response_modalities=["TEXT"],  # Force text output
 )
 
 llm_config_goals_check = genai.types.GenerateContentConfig(
@@ -253,6 +270,25 @@ def refine_goals(config: dict, context: Context):
     context.goals = refine_json["refined_goals"]  # Keep as list
     return True
 
+def research(config: dict, context: Context):
+    # Refines goals and use case in the context
+    refine_prompt = load_file("scripts/research.md")
+    if not "urls" in config:
+        return False # Nothing to do   
+    urls = ", ".join(config["urls"])
+    
+    response = llm_query(refine_prompt.format_map({
+        "use_case": context.use_case,
+        "goals": context.goals,
+        "urls": urls
+    }), config=llm_config_research, model=config["utility_model"])
+
+    # save the refined response for debugging
+    context.save_to("{name}_research_raw_{iter}.json", response["full"].model_dump_json(indent=2), content_name="research JSON response" )
+    summary = response["text"]
+    context.research_summary = summary or "No research summary available."
+    return True
+
 def code(config: dict, context: Context, use_diffs: bool = True):
 
     if context.previous:
@@ -273,7 +309,8 @@ def code(config: dict, context: Context, use_diffs: bool = True):
         "goals": context.goals,
         "code": to_string(context.previous.code if context.previous else ""),
         "output": to_string(context.previous.program_output if context.previous else ""),
-        "feedback": to_string(context.previous.feedback if context.previous else "")
+        "feedback": to_string(context.previous.feedback if context.previous else ""),
+        "research_summary": context.research_summary
     })
     context.save_to("{name}_coder_prompt_{iter}.md", prompt, content_name="coder prompt")
 
@@ -297,7 +334,8 @@ def code(config: dict, context: Context, use_diffs: bool = True):
                 if hasattr(part, 'code_execution_result') and part.code_execution_result:
                     context.current.add_flag('llm_executed')
                     break
-
+            if response_obj.candidates[0].url_context_metadata:
+                print("🛈 LLM used URL context tool.")
         if not 'llm_executed' in context.current.flags:
             print("⚠️  WARNING: LLM did not execute code (the code may be non-runnable)")
 
@@ -532,6 +570,11 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
         for url in task_config["urls"]:
             context.use_case += f"- {url}\n"
 
+    # Call research step if URLs are provided
+    if "urls" in task_config:
+        print("\n🔬 Performing research using provided URLs...")
+        research(task_config, context)
+
     for i in range(max_iterations):
         print(f"\n=== 🔁 Iteration {i + 1} of {max_iterations} ===")
 
@@ -584,6 +627,17 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
     code_filename = f"{filename}.py"
     return save_to_file(code_filename, final_code, content_name="final code")
 
+def run_test():
+    query = "Fetch this URL https://en.wikipedia.org/wiki/Code_128 and create a table matching ASCII codes to code sequences for the characters used in Code 128 barcode standard."
+    response = llm_query(query, model="gemini-2.5-flash-lite", config=llm_config_coder)
+    print("Response:")
+    print(response["text"])
+    response_obj = response["full"]
+    if hasattr(response_obj, 'candidates') and response_obj.candidates:
+        if response_obj.candidates[0].url_context_metadata:
+            print("🛈 LLM used URL context tool.")
+
+
 # --- CLI Test Run ---
 if __name__ == "__main__":
     print("\n🧠 Welcome to the AI Code Generation Agent")
@@ -614,4 +668,4 @@ if __name__ == "__main__":
     use_case_input = load_file(f"tasks/{config_name}/hl_spec.md")
     goals_input = load_file(f"tasks/{config_name}/ac.md")
     run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals, flag_diffs=args.diffs)
-    
+    # test = run_test()

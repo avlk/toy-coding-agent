@@ -1,4 +1,4 @@
-Write a code to generate UPC bar codes. The bar code symbology shall be Code 128-B. 
+Write a code to generate bar codes. The bar code symbology shall be Code 128-B. 
 
 The code shall be printed out in ASCII characters and shall be readable with smartphone. 
 

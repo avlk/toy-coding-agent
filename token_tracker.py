@@ -75,7 +75,8 @@ class TokenUsageTracker:
             return ["\n📊 No LLM usage statistics to report."]
         
         lines = []
-        lines.append("\n" + "=" * 80)
+        lines.append("")
+        lines.append("=" * 80)
         lines.append("📊 LLM Token Usage Summary")
         lines.append("=" * 80)
         

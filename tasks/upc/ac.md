@@ -2,7 +2,7 @@
 - Functionally correct
 - Handles comprehensive edge cases
 - Computationally efficient
-- Prints the UPC bar code
+- Prints the bar code
 - Rendered bar code is correct
 - The code does not install any libraries or packages
 - bar code shall not be generated with an external library 

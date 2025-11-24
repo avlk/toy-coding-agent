@@ -6,8 +6,6 @@ The code you are writing has to be a single file of Python code.
 Do not try to create complete application in one turn, there will be improvement rounds. Focus on creating a solid basis. Create architecture of an app and document it in the code. Write a skeleton of all major architecture units. If tests are required, provide just a couple for the start.
 When leaving placeholders that have to be filled later, clearly mark such places with a commentary.
 
-When URL's are provided, fetch them to get additional knowledge.
-
 If the code is meant to be runnable, execute it using code_execution tool and make sure it is syntactically correct and runs with no errors.
 If creating a skeleton/architecture, execution is optional.
 
@@ -15,6 +13,10 @@ If creating a skeleton/architecture, execution is optional.
 
 {use_case}
         
+## Technical Research
+
+{research_summary}
+
 ## Your goals
 
 {goals}
