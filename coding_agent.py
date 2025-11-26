@@ -108,31 +108,16 @@ class Context:
             print(f"Error creating file name: key {ke} in the template is invalid: {filename_template}")
             sys.exit(1)
             
-llm_config = genai.types.GenerateContentConfig(
-    temperature=0.3,
-    tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution)]
-)
 
 llm_config_coder = genai.types.GenerateContentConfig(
     temperature=0.3,
     tools=[
         genai.types.Tool(code_execution=genai.types.ToolCodeExecution), 
-        genai.types.Tool(google_search=genai.types.GoogleSearch()),
-        genai.types.Tool(url_context=genai.types.UrlContext()),
-        # {"url_context": {}}
-        # {"google_search": {}}
-        # {"url_context": {}},
-        # {'google_search': {}},
-        # {'code_execution': {}},
     ],
 )
 
 llm_config_reviewer = genai.types.GenerateContentConfig(
     temperature=0.5,
-    tools=[
-        genai.types.Tool(google_search=genai.types.GoogleSearch()),
-        genai.types.Tool(url_context=genai.types.UrlContext()),
-    ],
     response_modalities=["TEXT"],  # Force text output
 )
 
@@ -202,7 +187,7 @@ DEFAULT_TASK_CONFIG = {
 # Initialize token usage tracker
 token_tracker = TokenUsageTracker()
 
-def llm_query(query, parts=None, config=llm_config, model=default_llm_model):
+def llm_query(query, parts=None, config=llm_config_coder, model=default_llm_model):
     """
     Query the LLM with retries on server errors.
     Args:
@@ -689,8 +674,13 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
 
         return_to_iteration = progress_check(context)
         if return_to_iteration is not None:
-            print(f"🔄 No progress detected. Resetting to iteration {return_to_iteration + 1} and continuing from there.")
             context.trim_iterations(return_to_iteration+1)
+            if "restarted_from_no_progress" not in context.current.flags:
+                print(f"🔄 No progress detected. Resetting to iteration {return_to_iteration + 1} and continuing from there.")
+                context.current.add_flag("restarted_from_no_progress")
+            else:
+                print("⚠️  No progress detected again after restart. Restarting from step 1.")
+                context.trim_iterations(0)
 
     # Print token usage summary
     token_tracker.print_summary()
