@@ -125,7 +125,15 @@ llm_config_coder = genai.types.GenerateContentConfig(
         # {'google_search': {}},
         # {'code_execution': {}},
     ],
+)
 
+llm_config_reviewer = genai.types.GenerateContentConfig(
+    temperature=0.1,
+    tools=[
+        genai.types.Tool(google_search=genai.types.GoogleSearch()),
+        genai.types.Tool(url_context=genai.types.UrlContext()),
+    ],
+    response_modalities=["TEXT"],  # Force text output
 )
 
 llm_config_research = genai.types.GenerateContentConfig(
@@ -313,6 +321,8 @@ def research(config: dict, context: Context):
     # save the refined response for debugging
     context.save_to("{name}_research_raw_{iter}.json", response["full"].model_dump_json(indent=2), content_name="research JSON response" )
     summary = response["text"]
+    if not summary:
+        print("⚠️  Research step returned empty summary.")
     context.research_summary = summary or "No research summary available."
     return True
 
@@ -332,7 +342,7 @@ def code(config: dict, context: Context, use_diffs: bool = True):
         system_prompt = to_string(select_variant(to_lines(script), "b"))
 
     system_parts = [
-        ("Use Case", context.use_case)
+        ("Use Case", context.use_case),
         ("Research Summary", context.research_summary)
     ]
     user_parts = [
@@ -484,14 +494,33 @@ def feedback(config: dict, context: Context) -> str:
     print("🔍 Evaluating code against the goals...")
 
     script_path = "scripts/reviewer.md"
-    script = load_file(script_path)
-    feedback_prompt = script.format_map({
-        "use_case": context.use_case,
-        "goals": context.goals,
-        "code": context.current.code,
-        "code_output": context.current.program_output
-    })
-    context.current.feedback = llm_query(feedback_prompt, model=config["reviewer_model"])["text"]
+    system_prompt = load_file(script_path)
+
+    system_parts = [
+        ("Use Case", context.use_case),
+        ("Research Summary", context.research_summary)
+    ]
+    user_parts = [
+        ("Goals", context.goals)
+    ]    
+
+    if context.current.code:
+        user_parts.append(("Code from this iteration", format_code_block(context.current.code)))
+    if context.current.program_output:
+        user_parts.append(("Code execution output", format_code_block(context.current.program_output, language="shell")))
+    if context.previous and context.previous.feedback:
+        user_parts.append(("Your previous review", to_string(context.previous.feedback)))
+
+    for title, content in system_parts:
+        system_prompt += f"\n\n# {title}\n{content}"
+
+    prompt_text = system_prompt
+    for title, content in user_parts:
+        prompt_text += f"\n\n# {title}\n{content}"
+    context.save_to("{name}_review_prompt_{iter}.md", prompt_text, content_name="reviewer prompt text")
+
+    context.current.feedback = llm_query(system_prompt, parts=user_parts, 
+                                         config=llm_config_reviewer, model=config["reviewer_model"])["text"]
     if context.current.feedback:
         context.save_to("{name}_review_v{iter}.txt", context.current.feedback, content_name="code review")
         return True

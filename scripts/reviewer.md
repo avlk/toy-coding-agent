@@ -23,25 +23,10 @@ Classify issues as Minor, Major, or Critical.
 - Major means significant changes the coder needs to implement to meet the goals. Major are also all runtime errors.
 - Critical means the code does not meet the goal at all or has syntax errors.
 
-You have to create a TODO list for the next iteration of a coding agent run. **You have to put this list in a TODO section and format it as a TODO list.**
-Create 10 TODO items maximum. Each TODO should be a significant, actionable fix. 
+If you are provided with your previous review, follow these special rules:
+- Check if any Critical or Major TODO items from your previous review remain unaddressed in the current code and output.
+- If so, repeat only the most important 1 or 2 unresolved Critical or Major TODOs in your new TODO list, and do not suggest any new TODOs or improvements. Focus the coder agent exclusively on these unresolved issues.
+- If all previous Critical and Major TODOs are resolved, proceed with a normal review as described below.
 
-# Goals:
-
-{goals}
-
-# Use case
-
-This is the use case for the code. The code is created to fullfill this use case:
-
-{use_case}
-
-# Code
-
-~~~python
-{code}
-~~~
-
-# Program Output
-
-{code_output}
+Your TODO list for the next iteration of a coding agent run. **You have to put this list in a TODO section and format it as a TODO list.**
+Create 10 TODO items maximum. Each TODO should be a significant, actionable fix.
