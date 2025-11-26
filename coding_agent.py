@@ -128,7 +128,7 @@ llm_config_coder = genai.types.GenerateContentConfig(
 )
 
 llm_config_reviewer = genai.types.GenerateContentConfig(
-    temperature=0.1,
+    temperature=0.5,
     tools=[
         genai.types.Tool(google_search=genai.types.GoogleSearch()),
         genai.types.Tool(url_context=genai.types.UrlContext()),
@@ -323,6 +323,7 @@ def research(config: dict, context: Context):
     summary = response["text"]
     if not summary:
         print("⚠️  Research step returned empty summary.")
+        exit(1)
     context.research_summary = summary or "No research summary available."
     return True
 
@@ -353,7 +354,7 @@ def code(config: dict, context: Context, use_diffs: bool = True):
         if context.previous.code:
             user_parts.append(("Code from the previous iteration", format_code_block(context.previous.code)))
         if context.previous.program_output:
-            user_parts.append(("Previous iteration code execution output", format_code_block(context.previous.program_output, language="shell")))
+            user_parts.append(("Previous iteration code execution output", to_string(context.previous.program_output)))
         if context.previous.feedback:
             user_parts.append(("Feedback on the previous iteration", to_string(context.previous.feedback)))
 
@@ -507,7 +508,7 @@ def feedback(config: dict, context: Context) -> str:
     if context.current.code:
         user_parts.append(("Code from this iteration", format_code_block(context.current.code)))
     if context.current.program_output:
-        user_parts.append(("Code execution output", format_code_block(context.current.program_output, language="shell")))
+        user_parts.append(("Code execution output", to_string(context.current.program_output)))
     if context.previous and context.previous.feedback:
         user_parts.append(("Your previous review", to_string(context.previous.feedback)))
 

@@ -2,7 +2,7 @@
   "coder_model": "gemini-2.5-flash",
   "reviewer_model": "gemini-2.5-flash",
   "utility_model": "gemini-2.5-flash",
-  "max_rounds": 15,
+  "max_rounds": 25,
   "basename": "upc",
   "sandbox_method": "firejail",
   "commandline_args": "--test",
