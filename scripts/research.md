@@ -44,16 +44,45 @@ Your output will be provided to the coding agent as additional context. The use 
 [Critical facts, specifications, or requirements extracted from the URLs]
 
 ### Data Tables and Mappings
-[Any lookup tables, character mappings, encoding schemes, etc. that the coder will need]
 
-**CRITICAL FOR TABLES:**
-- If URLs contain lookup tables, mappings, constants, or structured data, extract them completely
-- Include the COMPLETE data with ALL entries from the source
-- Even if the source table has merged cells, complex layout, or human-oriented formatting, **parse it and extract all the data**
-- Present the data in a clear, readable format (text or tables)
-- DO NOT truncate tables with "..." or say "this is a sample"
-- DO NOT say "the full table includes" - provide the ACTUAL COMPLETE data
-- The coder cannot access the URLs and needs complete reference data from you
+**CRITICAL - PROVIDE AS PYTHON DATA STRUCTURES:**
+
+If URLs contain lookup tables, mappings, constants, or structured data, you MUST provide them as Python dictionaries, lists, or tuples that can be directly used in code.
+
+- Extract the COMPLETE data with ALL entries from the source
+- Even if the source table has merged cells or complex layout, **parse it and restructure as clean Python**
+- DO NOT use JSON, markdown tables, or any other format for data tables—only valid Python code structures (dict, list, tuple, etc.)
+- DO NOT truncate with "..." or say "this is a sample" - provide COMPLETE data
+- Add brief comments explaining what each structure represents
+
+**Example formats:**
+```python
+# Character to code mapping
+CHAR_MAP = {{
+    'A': 65,
+    'B': 66,
+    'C': 67,
+    # ... (include ALL entries)
+}}
+
+# Pattern table with tuples
+PATTERNS = {{
+    0: ('11011001100', 'Start A'),
+    1: ('11001101100', 'Value 1'),
+    # ... (include ALL entries)
+}}
+
+# List of valid codes
+VALID_CODES = [100, 101, 102, 103, ...]  # include all
+
+# Nested structures if needed
+ENCODING = {{
+    'set_a': {{0: 'NUL', 1: 'SOH', ...}},
+    'set_b': {{0: ' ', 1: '!', ...}},
+}}
+```
+
+If data is narrative or algorithmic (not tabular), describe it in text format.
 
 ### Implementation Notes
 [Important details about how to implement the solution based on URL content]
@@ -63,7 +92,6 @@ Your output will be provided to the coding agent as additional context. The use 
 
 **IMPORTANT:** 
 - You MUST use the url_context tool to fetch each URL provided
-- Be specific and precise - include actual values, tables, and formulas, not just descriptions
-- If a URL contains a data table or mapping, reproduce it COMPLETELY with every single entry
-- The coder is writing code from scratch and needs complete reference data
+- Be specific and precise - include actual values, formulas, and complete data structures
+- The coder cannot access the URLs and needs complete, ready-to-use reference data
 - Focus only on information relevant to the coding task

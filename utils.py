@@ -199,3 +199,14 @@ def find_code_blocks(markdown_text, delimiter="~~~", language="python"):
     code_blocks = pattern.findall(markdown_text)
     return code_blocks
 
+def format_code_block(code_lines, delimiter="~~~", language="python") -> str:
+    """
+    Format code lines as a code block with specified delimiter and language.
+    
+    Args:
+        code_lines: List of strings (lines of code)
+        delimiter: Code block delimiter (default: "```")
+        language: Programming language for the code block (default: "python")
+    """
+    code_str = to_string(code_lines)
+    return f"{delimiter}{language}\n{code_str}\n{delimiter}"

@@ -194,16 +194,43 @@ DEFAULT_TASK_CONFIG = {
 # Initialize token usage tracker
 token_tracker = TokenUsageTracker()
 
-def llm_query(query, config=llm_config, model=default_llm_model):
+def llm_query(query, parts=None, config=llm_config, model=default_llm_model):
+    """
+    Query the LLM with retries on server errors.
+    Args:
+        if parts is None:
+            query: The input query string
+        else:
+            query: System prompt string (will be cached automatically by Gemini if unchanged)
+            parts: List of (title, content) tuples to build the prompt
+        config: LLM configuration
+        model: LLM model name
+    """
     max_retries = 10
     
     for attempt in range(max_retries):
         try:
             # mark start time
             start_time = time.monotonic()
-            response = llm.models.generate_content(
-                model=model, contents=query, config=config
-            )
+            if parts is None:
+                response = llm.models.generate_content(
+                    model=model, contents=query, config=config
+                )
+            else:
+                request_config = config
+                # Use system instruction for caching - this gets cached automatically by Gemini
+                request_config.system_instruction = query
+                
+                # Build parts as proper content structure (not concatenated strings)
+                request_parts = []
+                for title, content in parts:
+                    request_parts.append({"text": f"\n\n# {title}\n{content}"})
+                
+                request_contents = [{"role": "user", "parts": request_parts}]
+                
+                response = llm.models.generate_content(
+                    model=model, contents=request_contents, config=request_config
+                )
             end_time = time.monotonic()
             # Calculate generation time in seconds
             generation_time = end_time - start_time
@@ -300,26 +327,41 @@ def code(config: dict, context: Context, use_diffs: bool = True):
 
     script = load_file(script_path)
     if use_diffs:
-        script = to_string(select_variant(to_lines(script), "a"))
+        system_prompt = to_string(select_variant(to_lines(script), "a"))
     else:
-        script = to_string(select_variant(to_lines(script), "b"))
+        system_prompt = to_string(select_variant(to_lines(script), "b"))
 
-    prompt = script.format_map({
-        "use_case": context.use_case,
-        "goals": context.goals,
-        "code": to_string(context.previous.code if context.previous else ""),
-        "output": to_string(context.previous.program_output if context.previous else ""),
-        "feedback": to_string(context.previous.feedback if context.previous else ""),
-        "research_summary": context.research_summary
-    })
-    context.save_to("{name}_coder_prompt_{iter}.md", prompt, content_name="coder prompt")
+    system_parts = [
+        ("Use Case", context.use_case)
+        ("Research Summary", context.research_summary)
+    ]
+    user_parts = [
+        ("Goals", context.goals)
+    ]    
+
+    if context.previous:
+        if context.previous.code:
+            user_parts.append(("Code from the previous iteration", format_code_block(context.previous.code)))
+        if context.previous.program_output:
+            user_parts.append(("Previous iteration code execution output", format_code_block(context.previous.program_output, language="shell")))
+        if context.previous.feedback:
+            user_parts.append(("Feedback on the previous iteration", to_string(context.previous.feedback)))
+
+    for title, content in system_parts:
+        system_prompt += f"\n\n# {title}\n{content}"
+
+    prompt_text = system_prompt
+    for title, content in user_parts:
+        prompt_text += f"\n\n# {title}\n{content}"
+    context.save_to("{name}_coder_prompt_{iter}.md", prompt_text, content_name="coder prompt text")
 
     try:
         print("🚧 Generating code...")
         coder_config=llm_config_coder
         # if context.previous:
         #     coder_config.temperature=0.5
-        code_response = llm_query(prompt, config=coder_config, model=config["coder_model"])
+        # code_response = llm_query(prompt, config=coder_config, model=config["coder_model"])
+        code_response = llm_query(system_prompt, parts=user_parts, config=coder_config, model=config["coder_model"])
         
         print("🧾 Processing LLM output...")
         # Save JSON response for debugging
