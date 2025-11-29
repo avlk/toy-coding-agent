@@ -122,12 +122,14 @@ llm_config_reviewer = genai.types.GenerateContentConfig(
 )
 
 llm_config_research = genai.types.GenerateContentConfig(
-    temperature=0,
     tools=[
-        {"url_context": {}},
-        {"google_search": {}}
+        {"url_context": {}}
     ],
     response_modalities=["TEXT"],  # Force text output
+    max_output_tokens=50000,  # limit the total output tokens
+    thinkingConfig=genai.types.ThinkingConfig(
+        thinking_budget=20000,
+    )
 )
 
 llm_config_goals_check = genai.types.GenerateContentConfig(
@@ -309,6 +311,8 @@ def research(config: dict, context: Context):
     if not summary:
         print("⚠️  Research step returned empty summary.")
         exit(1)
+    else:
+        context.save_to("{name}_research_summary_{iter}.md", summary, content_name="research summary")
     context.research_summary = summary or "No research summary available."
     return True
 
@@ -411,9 +415,15 @@ def execute(config: dict, context: Context):
     # Execute code locally and get actual program output and/or errors
     sandbox_method = config.get("sandbox_method", "auto")
     commandline_args = config.get("commandline_args", "")
-    
+
+    venv_path = None
+    python_packages = None
+    if config.get("python_packages"):
+        venv_path = f"solutions/venv/{context.filename}"
+        python_packages = config.get("python_packages")
+
     print(f"🖥️  Executing code locally (sandbox: {sandbox_method}, args: {commandline_args if commandline_args else 'none'})...")
-    local_exec_result = execute_sandboxed(to_string(context.current.code), method=sandbox_method, args=commandline_args)
+    local_exec_result = execute_sandboxed(to_string(context.current.code), method=sandbox_method, args=commandline_args, venv_path=venv_path, extra_packages=python_packages)
     local_exec_success = local_exec_result['success']
 
     if local_exec_success:
@@ -626,6 +636,10 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
         context.use_case += f"\n\nThe following URLs provide additional context:\n"
         for url in task_config["urls"]:
             context.use_case += f"- {url}\n"
+
+    if "python_packages" in task_config:
+        print(f"📦 Additional Python packages to install in sandbox: {task_config['python_packages']}")
+        context.use_case += f"\n\nThe following Python packages need to be installed in the sandbox environment: {', '.join(task_config['python_packages'])}\n"
 
     # Call research step if URLs are provided
     if "urls" in task_config:
