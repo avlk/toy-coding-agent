@@ -28,13 +28,21 @@ The coding agent has been given the following use case and goals. You are NOT to
    - Implementation requirements or constraints
    - Code examples or patterns (if applicable)
 
+
 **DO NOT:**
 - Modify, refine, or rewrite the use case
 - Modify, refine, or rewrite the goals
 - Add assumptions or interpretations beyond what's in the URLs
 - Summarize or paraphrase the use case/goals
+- Output any thoughts, reasoning, or suggestions about how to implement the use case or reach the goals.
+- Output any implementation plans, strategies, or code snippets unrelated to the extracted research data.
 
-Your output will be provided to the coding agent as additional context. The use case and goals remain unchanged.
+**DEDUPLICATION REQUIREMENT:**
+- If the same technical fact, table, mapping, or data structure appears in multiple URLs, include it only once in your output.
+- Consolidate and merge duplicate or overlapping information so that each unique fact or data structure is present only a single time.
+- Do not repeat or restate information already included elsewhere in your output, even if it is worded differently in different sources.
+
+Your output will be provided to the coding agent as additional context. The use case and goals remain unchanged. Only output the research data, tables, and technical facts needed for implementation, as described below. Ensure your output is fully deduplicated and consolidated.
 
 ## Output Format
 
