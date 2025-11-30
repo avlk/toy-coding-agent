@@ -61,22 +61,21 @@ def execute_with_firejail(code: str, timeout: int = 30, args: str = '', venv_pat
         f.write(code)
         temp_file = f.name
 
+    cmd = [
+        'firejail', '--quiet', '--noprofile', '--net=none', '--private-tmp',
+        '--noroot', '--nosound', '--no3d', '--nodvd', '--notv', '--nou2f'
+    ]
     if venv_path:
         venv_python = os.path.join(venv_path, 'bin', 'python')
         # Bind-mount the venv into the sandbox at the same path
-        cmd = [
-            'firejail', '--quiet', '--noprofile', '--net=none', '--private-tmp',
-            '--noroot', '--nosound', '--no3d', '--nodvd', '--notv', '--nou2f',
-            f'--bind={venv_path},{venv_path}',
+        cmd.extend([
+            f'--bind={venv_path},{venv_path}', 
             venv_python, temp_file
-        ]
+        ])
     else:
-        cmd = [
-            'firejail', '--quiet', '--noprofile', '--net=none', '--private-tmp',
-            '--noroot', '--nosound', '--no3d', '--nodvd', '--notv', '--nou2f',
+        cmd.extend([
             'python3', temp_file
-        ]
-
+        ])
     # Add command-line arguments if provided
     if args:
         cmd.extend(args.split())

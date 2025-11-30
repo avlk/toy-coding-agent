@@ -79,11 +79,6 @@ sudo apt-get install bubblewrap
 ### High Security (C Interpreter)
 ```json
 {
-  "coder_model": "gemini-2.5-pro",
-  "reviewer_model": "gemini-2.5-pro",
-  "utility_model": "gemini-2.5-flash-lite",
-  "max_rounds": 25,
-  "basename": "interp",
   "sandbox_method": "docker"
 }
 ```
@@ -91,11 +86,6 @@ sudo apt-get install bubblewrap
 ### Fast Iteration (Simple Tasks)
 ```json
 {
-  "coder_model": "gemini-2.5-flash",
-  "reviewer_model": "gemini-2.5-flash",
-  "utility_model": "gemini-2.5-flash-lite",
-  "max_rounds": 10,
-  "basename": "quicktest",
   "sandbox_method": "firejail"
 }
 ```

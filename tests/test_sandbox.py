@@ -11,6 +11,43 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sandbox_execution import execute_sandboxed
 
+class TestSandboxBasic:
+    """Basic tests for sandboxed code execution without venv."""
+
+    def _run_and_check(self, method, code, expected_output):
+        result = execute_sandboxed(
+            code=code,
+            timeout=30,
+            method=method
+        )
+        assert result['success'], f"{method} failed: {result['stderr']}"
+        assert expected_output in result['stdout'], f"{method} did not produce expected output"
+
+    def test_subprocess_basic(self):
+        self._run_and_check('subprocess', 'print("hello sandbox")', 'hello sandbox')
+
+    def test_firejail_basic(self):
+        import shutil
+        if not shutil.which('firejail'):
+            pytest.skip('firejail is not installed')
+        self._run_and_check('firejail', 'print("hello sandbox")', 'hello sandbox')
+
+    def test_docker_basic(self):
+        import shutil, subprocess
+        if not shutil.which('docker'):
+            pytest.skip('docker is not installed')
+        try:
+            subprocess.run(['docker', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        except Exception:
+            pytest.skip('docker is not usable in this environment')
+        self._run_and_check('docker', 'print("hello sandbox")', 'hello sandbox')
+
+    def test_bubblewrap_basic(self):
+        import shutil
+        if not shutil.which('bwrap'):
+            pytest.skip('bubblewrap (bwrap) is not installed')
+        self._run_and_check('bubblewrap', 'print("hello sandbox")', 'hello sandbox')
+
 class TestSandboxVenv:
     """Tests for venv and package installation in sandboxed execution."""
 
