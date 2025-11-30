@@ -1,17 +1,20 @@
 {
   "coder_model": "gemini-3-pro-preview",
   "reviewer_model": "gemini-2.5-flash",
-  "utility_model": "gemini-2.5-flash-lite",
-  "max_rounds": 15,
+  "utility_model": "gemini-2.5-flash",
+  "max_rounds": 25,
   "basename": "qr",
   "sandbox_method": "auto",
   "commandline_args": "--test",
   "urls": [
     "https://en.wikipedia.org/wiki/QR_code",
-    "https://cs.sun.ac.za/courses/cs114/Specifications",
     "https://ozeki.hu/p_3465-qr-code-encoding.html",
     "https://jbirnick.net/posts/qr-codes",
-    "https://en.wikipedia.org/wiki/Reed–Solomon_error_correction",
-    "https://en.wikiversity.org/wiki/Reed–Solomon_codes_for_coders"
+    "https://en.wikipedia.org/wiki/Reed%E2%80%93Solomon_error_correction",
+    "https://en.wikiversity.org/wiki/Reed%E2%80%93Solomon_codes_for_coders"
+  ],
+  "python_packages": [
+    "opencv-python",
+    "numpy"
   ]
 }
