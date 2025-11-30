@@ -5,6 +5,7 @@ Sandboxed code execution implementations for the coding agent.
 import os
 import subprocess
 import tempfile
+import shutil
 
 # Methods for automatic sandbox selection, subprocess fallback is commented out for security reasons
 # If you need subprocess fallback, specifically set method='subprocess' when calling execute_sandboxed
@@ -25,6 +26,77 @@ def _make_result(success: bool, stdout: str, stderr: str, exit_code: int, method
         'method': method
     }
 
+def _test_firejail_possible():
+    # Check if running under WSL
+    if not shutil.which('firejail'):
+        return False
+
+    try:
+        with open("/proc/version") as f:
+            version = f.read().lower()
+            if "microsoft" in version or "wsl" in version:
+                return False  # WSL kernel → namespaces incomplete
+    except FileNotFoundError:
+        pass
+
+    # Check AppArmor
+    if os.path.exists("/sys/module/apparmor/parameters/enabled"):
+        with open("/sys/module/apparmor/parameters/enabled") as f:
+            if f.read().strip() != "Y":
+                return False
+    else:
+        return False  # no AppArmor support
+
+    # Check namespaces
+    ns_path = "/proc/self/ns"
+    if os.path.exists(ns_path):
+        ns_entries = os.listdir(ns_path)
+        # If only 'mnt' and 'pid' exist but point to same inode → no isolation
+        if len(ns_entries) < 5:
+            return False
+
+    return True
+
+def _test_docker_possible():
+    if not shutil.which('docker'):
+        return False
+
+    try:
+        subprocess.run(['docker', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except Exception:
+        return False
+
+    return True
+
+def _test_bwrap_possible():
+    if not shutil.which('bwrap'):
+        return False
+    return True
+
+
+_sandbox_available_methods = {}
+def sandbox_method_available(method: str) -> bool:
+    """Check if a sandbox method is available on the system."""
+
+    # Cached check results
+    global _sandbox_available_methods
+    if method in _sandbox_available_methods:
+        return _sandbox_available_methods[method]
+
+    if method == 'firejail':
+        result = _test_firejail_possible()
+    elif method == 'docker':
+        result = _test_docker_possible()
+    elif method == 'bubblewrap':
+        result = _test_bwrap_possible()
+    elif method == 'subprocess':
+        result = True  # always available
+    else:
+        return False
+
+    # Store positive result in cache
+    _sandbox_available_methods[method] = result
+    return result
 
 def _execute_with_cleanup(cmd: list, temp_file: str, timeout: int, method: str) -> dict:
     """Execute command with automatic cleanup and consistent error handling."""
@@ -62,7 +134,7 @@ def execute_with_firejail(code: str, timeout: int = 30, args: str = '', venv_pat
         temp_file = f.name
 
     cmd = [
-        'firejail', '--quiet', '--noprofile', '--net=none', '--private-tmp',
+        'firejail', '--quiet', '--noprofile', '--net=none', '--private',
         '--noroot', '--nosound', '--no3d', '--nodvd', '--notv', '--nou2f'
     ]
     if venv_path:
@@ -206,6 +278,8 @@ def execute_sandboxed(
         return _execute_with_cleanup(cmd, temp_file, timeout, 'subprocess')
     else:  # method == 'auto'
         for sandbox_method in AUTO_METHODS:
+            if not sandbox_method_available(sandbox_method):
+                continue
             result = execute_sandboxed(code, timeout, method=sandbox_method, args=args, venv_path=venv_path, extra_packages=extra_packages)
             if 'not found' not in result['stderr']:
                 return result
