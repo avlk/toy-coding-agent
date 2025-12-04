@@ -207,12 +207,16 @@ def llm_query(query, parts=None, config=llm_config_coder, model=default_llm_mode
         try:
             # mark start time
             start_time = time.monotonic()
+            request_config = config
+            
+            if model.startswith("gemini-3"):
+                request_config.temperature = 1.0 # For Gemini 3 it is important not to alter the default temperature
+
             if parts is None:
                 response = llm.models.generate_content(
-                    model=model, contents=query, config=config
+                    model=model, contents=query, config=request_config
                 )
             else:
-                request_config = config
                 # Use system instruction for caching - this gets cached automatically by Gemini
                 request_config.system_instruction = query
                 
@@ -557,7 +561,7 @@ def goals_met(config: dict, context: Context) -> tuple[bool, int]:
 
     return (False, 0)
 
-def progress_check(context: Context) -> int:
+def progress_check(context: Context, reset_threshold: int) -> int:
     """ 
     Checks if there is progress in scores.
     If there is no progress over the last 3 iterations, returns the iteration number to return to.
@@ -565,13 +569,13 @@ def progress_check(context: Context) -> int:
     # Calculate score sequence - use get_score() to handle None
     scores = [x.get_score() for x in context.iterations]
     scores.append(context.current.get_score())
-    if len(scores) < 3:
+    if len(scores) < reset_threshold:
         return None  # Not enough data to determine
-    # Find last best score index (rightmost), and if it's older than 3 iterations, return that index
+    # Find last best score index (rightmost), and if it's older than reset_threshold iterations, return that index
     best_score = max(scores)
     # Find this score from the right
     best_index = len(scores) - 1 - scores[::-1].index(best_score)
-    if best_index < len(scores) - 3:
+    if best_index < len(scores) - reset_threshold:
         return best_index
     return None
 
@@ -606,7 +610,7 @@ def create_filename(basename: str) -> str:
     return f"{basename}_{random_suffix}"
 
 # --- Main Agent Function ---
-def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goals: bool = True, flag_diffs: bool = True) -> str:
+def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goals: bool = True, flag_diffs: bool = True, reset_threshold: int = 3) -> str:
     max_iterations = task_config["max_rounds"]
     
     print("\n🎯 Use Case:")
@@ -639,7 +643,7 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
 
     if "python_packages" in task_config:
         print(f"📦 Additional Python packages to install in sandbox: {task_config['python_packages']}")
-        context.use_case += f"\n\nThe following Python packages need to be installed in the sandbox environment: {', '.join(task_config['python_packages'])}\n"
+        context.use_case += f"\n\nThe following extra Python packages will be available for use: {', '.join(task_config['python_packages'])}\n"
 
     # Call research step if URLs are provided
     if "urls" in task_config:
@@ -686,15 +690,16 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
         scores.append(context.current.score)
         print(f"📊 Completion score progression: {scores}")
 
-        return_to_iteration = progress_check(context)
-        if return_to_iteration is not None:
-            context.trim_iterations(return_to_iteration+1)
-            if "restarted_from_no_progress" not in context.current.flags:
-                print(f"🔄 No progress detected. Resetting to iteration {return_to_iteration + 1} and continuing from there.")
-                context.current.add_flag("restarted_from_no_progress")
-            else:
-                print("⚠️  No progress detected again after restart. Restarting from step 1.")
-                context.trim_iterations(0)
+        if reset_threshold > 0:
+            return_to_iteration = progress_check(context, reset_threshold)
+            if return_to_iteration is not None:
+                context.trim_iterations(return_to_iteration+1)
+                if "restarted_from_no_progress" not in context.current.flags:
+                    print(f"🔄 No progress detected. Resetting to iteration {return_to_iteration + 1} and continuing from there.")
+                    context.current.add_flag("restarted_from_no_progress")
+                else:
+                    print("⚠️  No progress detected again after restart. Restarting from step 1.")
+                    context.trim_iterations(0)
 
     # Print token usage summary
     token_tracker.print_summary()
@@ -729,8 +734,11 @@ if __name__ == "__main__":
                         help="Use unified diffs for coder output (default)")
     parser.add_argument("--no-diffs", dest="diffs", action="store_false",
                         help="Do not use unified diffs for coder output")
+    parser.add_argument("--reset", type=int, help="Number of unsuccessful operations before resetting the the last successful iteration")
+    parser.add_argument("--no-reset", dest="reset", action="store_const", const=0,
+                        help="Disable resetting on no progress")
     parser.set_defaults(refine_goals=True, diffs=True)
-    
+    parser.set_defaults(reset=3)
     args = parser.parse_args()
     config_name = args.config_name
 
@@ -743,5 +751,5 @@ if __name__ == "__main__":
     
     use_case_input = load_file(f"tasks/{config_name}/hl_spec.md")
     goals_input = load_file(f"tasks/{config_name}/ac.md")
-    run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals, flag_diffs=args.diffs)
+    run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals, flag_diffs=args.diffs, reset_threshold=args.reset)
     # test = run_test()
