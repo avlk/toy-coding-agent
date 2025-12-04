@@ -17,14 +17,15 @@ The coding agent has been given the following use case and goals. You are NOT to
 
 ## Your Task
 
-1. **FIRST: Fetch each URL** using the url_context tool to gather information from all provided URLs
-2. **THEN: Extract** the technical information from these URLs that is relevant to the coding task
-3. **FINALLY: Write your output** in the format specified below
+1. **FIRST: Fetch each URL** using the url_context tool to gather information from all provided URLs. Do not deny a fetched content if the returned URL is urlencoded differently to the original URL - make sure you decode all url encodings and compare them afterwards.
+2. **THEN: Extract** the technical information from these URLs that is relevant to the coding task. 
+3. **THEN: Combine** the knowledge you collected at the previous step and generate one, not self-controvertial, set of information. Limit the number of information to the minimum needed to fulfill the task.
+4. **FINALLY: Write your output** in the format specified below.
 
 **Focus on technical details** such as:
    - Data formats, specifications, and standards
    - Required algorithms or formulas
-   - Lookup tables, mappings, or constants
+   - Lookup tables, mappings, or constants - to the extent required by the task
    - Implementation requirements or constraints
    - Code examples or patterns (if applicable)
 
@@ -57,10 +58,10 @@ Your output will be provided to the coding agent as additional context. The use 
 
 If URLs contain lookup tables, mappings, constants, or structured data, you MUST provide them as Python dictionaries, lists, or tuples that can be directly used in code.
 
-- Extract the COMPLETE data with ALL entries from the source
+- Extract the COMPLETE data with ALL entries from the source, then limit to that data that may be needed for the task completion
 - Even if the source table has merged cells or complex layout, **parse it and restructure as clean Python**
 - DO NOT use JSON, markdown tables, or any other format for data tables—only valid Python code structures (dict, list, tuple, etc.)
-- DO NOT truncate with "..." or say "this is a sample" - provide COMPLETE data
+- DO NOT truncate with "..." or say "this is a sample", provide COMPLETE data that may be needed for the task completion
 - Add brief comments explaining what each structure represents
 
 **Example formats:**

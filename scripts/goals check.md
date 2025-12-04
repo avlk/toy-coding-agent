@@ -16,18 +16,15 @@ Based on the feedback above, evaluate:
    - If some goals are only partially (or mostly) met, respond with "No"
    - If the goals are met, all tests pass and only Minor or cosmetic corrections are left to be done, respond with "Yes"
 
-2. **Score**: Provide a completion score (0-100) that represents the progress of the coding task:
-   - 0-20: Initial/minimal progress, major issues, most goals unmet
-   - 21-40: Some basic functionality, but significant issues remain
-   - 41-60: Core functionality present, several goals met but important ones missing
-   - 61-80: Most goals met, minor issues or edge cases remaining
-   - 81-95: Nearly complete, only cosmetic or minor improvements needed
-   - 96-100: All goals fully met, production ready
-
+2. **Score**: Provide a completion score (0-100) that represents the progress of the coding task and is a sum of:
+   - 0-30 points for architectural and structural completeness of the code.
+   - 0-30 points for core functionality implementation.
+   - 0-40 points for code quality, test coverage (if applicable), test success (if applicable).
+   
    **IMPORTANT**: Apply penalties for critical issues:
-   - If the feedback reports non-compilable code (syntax errors, SyntaxError): subtract up to 20 points
-   - If the feedback reports non-running tests or test failures: subtract up to 15 points
-   - If the feedback reports runtime errors (exceptions during execution): subtract up to 20 points
+   - If the feedback reports non-compilable code (syntax errors, SyntaxError): subtract up to 10 points
+   - If the feedback reports non-running tests or test failures: subtract up to 10 points
+   - If the feedback reports runtime errors (exceptions during execution): subtract up to 10 points
    - These penalties are cumulative and should reflect the severity of the issues
 
 Return your response in JSON format with "result" and "score" fields.
