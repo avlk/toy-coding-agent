@@ -1,10 +1,10 @@
 Write a code to generate QR codes. The QR code payload shall be text or URL.
 
-QR code size shall be adjustable with the length of it's payload. 
+QR code size shall be adjustable with the length of it's payload.
 
 Support QR code versions 1 and 2. Select only one ECC level for encoding. Use only UTF-8 as a character set. Autoselect mask pattern.
 
-The code shall be printed out in ASCII characters and shall be readable with smartphone. 
+The code shall be printed out in ASCII characters and shall be readable with smartphone.
 
 Take into account that console characters have 2:1 height to width ratio, use spaces ('  ') for blank pixels and block characters ('██') for filled pixels.
 
@@ -12,6 +12,7 @@ A set of unit test shall be provided. Make sure that there is a unit test that e
 
 The program shall print the QR code for the string that is provided to the input, or "Agentic AI" if nothing is provided.
 Parameters starting with -- are not considered an input to be decoded.
-When run with --test parameter, it prints the default QR code and runs all tests. 
+When run with --test parameter, it prints the default QR code and runs all tests.
 
-The use of external libraries to render a QR code (like qrcode) is not allowed for the task completion.
+Use 3rd-party library (opencv) prove decodability of the QR code with the smartphone.
+The use of external libraries to render a QR code (like qrcode) is not allowed.

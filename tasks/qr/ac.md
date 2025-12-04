@@ -5,9 +5,11 @@
 - Prints the QR code
 - Rendered QR code is correct
 - The code does not install any libraries or packages
-- QR code matrix shall not be generated with an external library 
+- QR code matrix shall not be generated with an external library
 - QR code can encode text or URL
 - QR code size adjust to the length of input
 - QR code shall be scannable by a smartphone
-- unit tests are present
+- unit tests for GF(256) arithmetic are present
+- unit tests for Reed-Solomon encoder are present
+- unit tests for QR code generation are present
 - unit tests run with no errors
