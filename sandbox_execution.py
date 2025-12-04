@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 import shutil
+import sys
 
 # Methods for automatic sandbox selection, subprocess fallback is commented out for security reasons
 # If you need subprocess fallback, specifically set method='subprocess' when calling execute_sandboxed
@@ -128,7 +129,7 @@ def _execute_with_cleanup(cmd: list, temp_file: str, timeout: int, method: str) 
 
 def execute_with_firejail(code: str, timeout: int = 30, args: str = '', venv_path: str = None) -> dict:
     """Execute code using firejail for sandboxing. Supports venv if venv_path is given."""
-    import os
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(code)
         temp_file = f.name
@@ -157,7 +158,7 @@ def execute_with_firejail(code: str, timeout: int = 30, args: str = '', venv_pat
 
 def execute_with_docker(code: str, timeout: int = 30, image: str = 'python:3.12-slim', args: str = '', venv_path: str = None) -> dict:
     """Execute code in a Docker container. Supports venv if venv_path is given."""
-    import os
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(code)
         temp_file = f.name
@@ -184,7 +185,7 @@ def execute_with_docker(code: str, timeout: int = 30, image: str = 'python:3.12-
 
 def execute_with_bubblewrap(code: str, timeout: int = 30, args: str = '', venv_path: str = None) -> dict:
     """Execute code using bubblewrap. Supports venv if venv_path is given."""
-    import os
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(code)
         temp_file = f.name
@@ -232,29 +233,27 @@ def execute_sandboxed(
         extra_packages: List of extra Python packages to install in the venv (optional)
     """
 
-    def ensure_venv_and_packages(venv_path, extra_packages):
-        import sys
-        import subprocess
-        import os
-        # Create venv if it doesn't exist
-        if not os.path.exists(venv_path):
-            print("Creating venv at:", venv_path)
-            subprocess.check_call([sys.executable, '-m', 'venv', venv_path])
-        pip_path = os.path.join(venv_path, 'bin', 'pip')
-        print("Pip path:", pip_path)
-        if extra_packages:
-            print("Installing extra packages:", extra_packages)
-            subprocess.check_call([pip_path, 'install'] + list(extra_packages))
-        python_path = os.path.join(venv_path, 'bin', 'python')
-        print("Using python at:", python_path)
-        return python_path
-
+    
     # If venv_path is specified, ensure it and extra packages are set up
     if venv_path:
         try:
-            ensure_venv_and_packages(venv_path, extra_packages)
+            import os
+            import subprocess
+            # Create venv if it doesn't exist
+            if not os.path.exists(venv_path):
+                print("Creating venv at:", venv_path)
+                subprocess.check_call([sys.executable, '-m', 'venv', venv_path])
+            pip_path = os.path.join(venv_path, 'bin', 'pip')
+            print("Pip path:", pip_path)
+            if extra_packages:
+                print("Installing extra packages:", extra_packages)
+                subprocess.check_call([pip_path, 'install'] + list(extra_packages))
+            python_path = os.path.join(venv_path, 'bin', 'python') # venv python
+            print("Using python at:", python_path)
         except Exception as e:
             return _make_result(False, '', f'Venv setup error: {str(e)}', -1, 'venv')
+    else:
+        python_path = 'python3'  # system python
 
     # Dispatch to the appropriate sandbox method
     if method == 'firejail':
@@ -268,11 +267,7 @@ def execute_sandboxed(
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(code)
             temp_file = f.name
-        if venv_path:
-            python_path = os.path.join(venv_path, 'bin', 'python')
-            cmd = [python_path, temp_file]
-        else:
-            cmd = ['python3', temp_file]
+        cmd = [python_path, temp_file]
         if args:
             cmd.extend(args.split())
         return _execute_with_cleanup(cmd, temp_file, timeout, 'subprocess')
@@ -280,7 +275,10 @@ def execute_sandboxed(
         for sandbox_method in AUTO_METHODS:
             if not sandbox_method_available(sandbox_method):
                 continue
-            result = execute_sandboxed(code, timeout, method=sandbox_method, args=args, venv_path=venv_path, extra_packages=extra_packages)
+            print("Trying sandbox method:", sandbox_method)
+            # Recursively call with the specific method and no extra_packages to avoid re-setup
+            result = execute_sandboxed(code, timeout, method=sandbox_method, args=args, venv_path=venv_path)
             if 'not found' not in result['stderr']:
                 return result
-        return execute_sandboxed(code, timeout, method='subprocess', args=args, venv_path=venv_path, extra_packages=extra_packages)
+        # Return error if no sandbox methods are available
+        return _make_result(False, '', 'No available sandbox methods found on the system.', -1, 'auto')
