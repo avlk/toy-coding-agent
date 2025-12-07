@@ -14,6 +14,7 @@ If the code has placeholder items to be filled with the real code, do fill such 
 - Preserve all working code exactly as-is
 - Do not refactor, reorganize, or "improve" code that is already functional
 - Focus exclusively on the TODO items listed in the feedback
+- Use only the following preinstalled python packages in your code: attrs, chess, contourpy, fpdf, geopandas, imageio, jinja2, joblib, jsonschema, jsonschema-specifications, lxml, matplotlib, mpmath, numpy, opencv-python, openpyxl, packaging, pandas, pillow, protobuf, pylatex, pyparsing, PyPDF2, python-dateutil, python-docx, python-pptx, reportlab, scikit-learn, scipy, seaborn, six, striprtf, sympy, tabulate, tensorflow,toolz, xlrd
 
 You will be provided with:
 - Use Case description
