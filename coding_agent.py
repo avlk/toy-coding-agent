@@ -337,19 +337,22 @@ def code(config: dict, context: Context, use_diffs: bool = True):
 
     system_parts = [
         ("Use Case", context.use_case),
-        ("Research Summary", context.research_summary)
+        ("Goals", context.goals),
     ]
     user_parts = [
-        ("Goals", context.goals)
-    ]    
+    ]
 
     if context.previous:
-        if context.previous.code:
-            user_parts.append(("Code from the previous iteration", format_code_block(context.previous.code)))
-        if context.previous.program_output:
-            user_parts.append(("Previous iteration code execution output", to_string(context.previous.program_output)))
+        system_parts.append(("Research Summary", context.research_summary))
         if context.previous.feedback:
             user_parts.append(("Feedback on the previous iteration", to_string(context.previous.feedback)))
+        if context.previous.program_output:
+            user_parts.append(("Previous iteration code execution output", to_string(context.previous.program_output)))
+        if context.previous.code:
+            user_parts.append(("Code from the previous iteration", format_code_block(context.previous.code)))
+    else:
+        # Append at least something to user parts to avoid empty user prompt
+        user_parts.append(("Research Summary", context.research_summary))
 
     for title, content in system_parts:
         system_prompt += f"\n\n# {title}\n{content}"
