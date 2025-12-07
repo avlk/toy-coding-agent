@@ -15,4 +15,7 @@ Parameters starting with -- are not considered an input to be decoded.
 When run with --test parameter, it prints the default QR code and runs all tests.
 
 Use 3rd-party library (opencv) prove decodability of the QR code with the smartphone.
+Use 'sympy.polys.domains' package from 'sympy' to test your GF256 implementation.
 The use of external libraries to render a QR code (like qrcode) is not allowed.
+
+You **MUST** use external reference (using sympy library) to generate reference values for GF(256) unit tests. Do not hallucinate or guess them!

@@ -1,5 +1,5 @@
 {
-  "coder_model": "gemini-2.5-flash",
+  "coder_model": "gemini-3-pro-preview",
   "reviewer_model": "gemini-2.5-flash",
   "utility_model": "gemini-2.5-flash",
   "max_rounds": 15,
@@ -13,6 +13,7 @@
   ],
   "python_packages": [
     "opencv-python",
-    "numpy"
+    "numpy",
+    "sympy"
   ]
 }

@@ -10,6 +10,7 @@
 - QR code size adjust to the length of input
 - QR code shall be scannable by a smartphone
 - unit tests for GF(256) arithmetic are present
+- unit tests for GF(256) rely on reference values provided by available library implementations like sympy
 - unit tests for Reed-Solomon encoder are present
 - unit tests for QR code generation are present
 - unit tests run with no errors
