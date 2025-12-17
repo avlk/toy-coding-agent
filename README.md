@@ -54,20 +54,7 @@ export GEMINI_API_KEY="your-api-key-here"
 
 4. **Install sandbox tools (optional but recommended):**
 
-For Firejail (lightweight, Linux):
-```bash
-sudo apt-get install firejail
-```
-
-For Docker (full isolation):
-```bash
-# See https://docs.docker.com/get-docker/
-```
-
-For Bubblewrap (Linux namespaces):
-```bash
-sudo apt-get install bubblewrap
-```
+See **[README_SANDBOX.md](README_SANDBOX.md)** for detailed documentation and installation instructions.
 
 ## Usage
 
@@ -93,33 +80,42 @@ Where `<task-name>` is a directory in the `tasks/` folder containing task config
 python coding_agent.py 8-queens
 
 # Run QR code generator without goal refinement
-python coding_agent.py qr --no-refine-goals
+python coding_agent.py 3d-ball --no-refine-goals
 
 # Run with no automatic resets
-python coding_agent.py 3d-ball --no-reset
+python coding_agent.py upc --no-reset 
 
 # Run without using diffs
-python coding_agent.py c-interpreter --no-diffs
+python coding_agent.py qr --no-diffs
 ```
 
 ## Available Tasks
 
 The `tasks/` directory contains several pre-configured tasks:
 
-### 1. **8-queens** (Difficulty: Easy)
+### 1. **8-queens** (Difficulty: Easiest)
 Solve the classic 8 Queens problem and print all solutions. A simple algorithmic task suitable for testing the basic workflow.
+The model does not require any external sources to complete the task as it already knows about the problem from its learning set,
+it may already have seen some solutions and it can of course code.
 
-### 2. **qr** (Difficulty: Medium-Hard)
-Generate QR codes that are readable by smartphones without using external QR encoding libraries. Requires research from external URLs to understand the QR code standard. Tests the agent's ability to implement complex protocols.
+### 2. **3d-ball** (Difficulty: Easy)
+Create ASCII art animation of a 3D sphere throwing a shadow onto a plane.
+While the model is aware of geometric calculations and basic visualization options from its training data,
+it takes some effort to assess if the picture is rendered correctly.
 
-### 3. **3d-ball** (Difficulty: Medium)
-Create ASCII art animation of a rotating 3D sphere. Tests geometric calculations and visualization.
+### 3. **c-interpreter** (Difficulty: Medium)
+Design a C-like language and implement its interpreter along with the test suite.
+It tests the models ability to design a language, plan implementation steps, create a set of tests and fix the code.
+The code does not come out perfect or even feature-complete after the first run and it takes significant effort to get it done.
+While it was expected to be a hard task, it is not that hard actually, as the model does not need any external context for the task completion:
+it knows plenty about programming languages, testing, reviewing code and it can code very well.
 
-### 4. **c-interpreter** (Difficulty: Hard)
-Implement a subset of a C language interpreter. Tests parser design and language implementation skills.
+### 4. **upc** (Difficulty: Hard)
+Barcode generator and validator. A Code-128 barcode generator is not the hardest thing to do. What it does is basically just take a table mapping input characters to the bar sequences, map input data to the output sequence and print it. Surprisingly, it is a hard task for an LLM, as it does not know any of these mappings by heart. To make the model use the right mapping, resource URLs are provided which are parsed by a Researcher sub-agent and fed into the prompt. The data from the researcher is filling up the context window and makes the model think about it, summarize the data, which generally reduces the amount of tokens and context left for thinking and writing correct code.
 
-### 5. **upc** (Difficulty: Medium)
-Universal Product Code (barcode) generator and validator.
+### 5. **qr** (Difficulty: Hardest)
+Generate QR codes that are readable by smartphones without using external QR encoding libraries. Requires research from external URLs to understand the QR code standard.While being of the same type as the **upc** task, it brings much more complexity: 1) The codes are using GF(2^8) math, and the model is generally not good at math, and it is much less good at Galois field calculations. GF(2^8) math can't be quickly proven by it's internal Python interpreter. It would be fair to say that the model knows about Galois fields, of course, it just misses some details here and there. 2) The code is two-dimensional and code point locations are much easier to show in a picture than to explain with words, but the model only receives words. It's really, really hard to understand the logic behind QR code pixel placement by only reading words. 3) The QR code uses Reed-Solomon error correction which is another layer of mathematical complexity for the model. 4) The model has to select and use some non-trivial way to test the code readability. Overall, after the model processes and understands everything it needs to complete the coding round, it has not too many tokens left for thinking and tool use. Gemini-2.5-flash model is usually quite quickly overwhelmed with the complexity, fails to run the code execution tool to proofread its code, generates faulty diffs and often repeats its previous errors. It is not impossible, but hard to reach the goals when not using Gemini-3-pro for this task.
+
 
 ## Task Configuration
 
@@ -141,7 +137,7 @@ tasks/
   "coder_model": "gemini-2.5-pro",
   "reviewer_model": "gemini-2.5-pro",
   "utility_model": "gemini-2.5-flash-lite",
-  "max_rounds": 25,
+  "max_rounds": 15,
   "basename": "solution",
   "sandbox_method": "auto",
   "commandline_args": "",
@@ -153,7 +149,7 @@ tasks/
 ```
 
 **Configuration Options:**
-- `coder_model`: Model for code generation (e.g., gemini-2.5-pro, gemini-3-pro-preview)
+- `coder_model`: Model for code generation
 - `reviewer_model`: Model for code review and feedback
 - `utility_model`: Model for utility tasks (goal checking, research)
 - `max_rounds`: Maximum iteration count
@@ -161,7 +157,11 @@ tasks/
 - `sandbox_method`: Execution environment (auto, firejail, docker, bubblewrap, subprocess)
 - `commandline_args`: Arguments to pass when executing the generated code
 - `urls`: External documentation URLs for research phase (optional)
-- `python_packages`: Extra packages to install in sandbox venv (optional)
+- `python_packages`: Extra packages to install in sandbox venv to make local execution successful (optional). The code_execution tool of the model has a limited set of packages in its cloud shell. The model may decide to use any of those if not limited by the prompt. Make sure that your local execution environment has enough packages installed so that it does not fail on `import` directive.
+
+A list of models: gemini-2.5-flash-lite, gemini-2.5-flash, gemini-2.5-pro, gemini-3-pro-preview.
+
+A list of packages the code_exection tool has access to: attrs, chess, contourpy, fpdf, geopandas, imageio, jinja2, joblib, jsonschema, jsonschema-specifications, lxml, matplotlib, mpmath, numpy, opencv-python, openpyxl, packaging, pandas, pillow, protobuf, pylatex, pyparsing, PyPDF2, python-dateutil, python-docx, python-pptx, reportlab, scikit-learn, scipy, seaborn, six, striprtf, sympy, tabulate, tensorflow,toolz, xlrd.
 
 ## Architecture
 
@@ -297,7 +297,7 @@ Multiple layers of error handling:
 
 ## Output Files
 
-Generated files are saved to the `solutions/` directory with the following naming convention:
+The agent saves intermediate data to the `solutions/` directory, so that it is easy to debug or understand what it happening. All file names start with the same base name. Some of the files are:
 
 - `{name}.py` - Final solution
 - `{name}_v{iter}.py` - Intermediate code versions
@@ -310,33 +310,18 @@ Generated files are saved to the `solutions/` directory with the following namin
 - `{name}_refined_goals.md` - Refined acceptance criteria
 - `{name}_research_summary_{iter}.md` - Research results
 
-Where `{name}` is a unique identifier like `solution_1234` and `{iter}` is the iteration number.
+Here, `{name}` is a unique base name like `solution_1234` and `{iter}` is the iteration number.
 
 ## Sandboxed Execution
 
-The agent supports multiple sandbox methods for secure code execution:
+The agent supports multiple sandbox methods for secure code execution. See **[README_SANDBOX.md](README_SANDBOX.md)** for detailed documentation and installation instructions.
 
-### Auto (Recommended)
-Tries methods in order: Firejail → Docker → Bubblewrap
-
-### Firejail (Lightweight, Linux)
-- No network access
-- Limited filesystem access
-- Private /tmp directory
-- No privilege escalation
-
-### Docker (Full Isolation)
-- Complete filesystem isolation
-- Resource limits (512MB RAM, 1 CPU)
-- Works on Linux, macOS, Windows
-- Slower startup due to container overhead
-
-### Bubblewrap (Linux Namespaces)
-- Uses Linux kernel namespaces
-- No network access
-- Limited filesystem access
-
-See `README_SANDBOX.md` for detailed sandbox configuration.
+**Available methods:**
+- `auto` - Automatically tries Firejail → Docker → Bubblewrap (recommended)
+- `firejail` - Lightweight Linux sandbox with filesystem/network isolation
+- `docker` - Full container isolation, cross-platform
+- `bubblewrap` - Uses linux namespaces, very lightweight, can be used with WSL
+- `subprocess` - No sandboxing, dangerous, development only
 
 ## Token Usage Tracking
 
@@ -347,34 +332,6 @@ The agent tracks and reports:
 - Generation times
 - Per-iteration and cumulative statistics
 
-## Project Structure
-
-```
-coding-agent/
-├── coding_agent.py          # Main agent implementation
-├── patch.py                 # Unified diff parsing and application
-├── sandbox_execution.py     # Secure code execution backends
-├── token_tracker.py         # Token usage monitoring
-├── utils.py                 # Utility functions
-├── requirements.txt         # Python dependencies
-├── README.md               # This file
-├── README_SANDBOX.md       # Sandbox configuration details
-├── scripts/                # LLM prompt templates
-│   ├── coder create.md
-│   ├── coder fix.md
-│   ├── reviewer.md
-│   ├── goals check.md
-│   ├── refine task.md
-│   ├── research.md
-│   └── syntax fix.md
-├── tasks/                  # Task definitions
-│   ├── 8-queens/
-│   ├── qr/
-│   ├── 3d-ball/
-│   ├── c-interpreter/
-│   └── upc/
-└── solutions/             # Generated solutions (created at runtime)
-```
 
 ## Development and Customization
 
@@ -412,13 +369,6 @@ Different models have different strengths:
 
 Configure models per task in `config.json`.
 
-## Contributing
-
-Contributions are welcome! Areas for improvement:
-- Sandbox evaluation
-- Enhanced error recovery strategies
-- Better progress metrics and visualization
-
 ## License
 
 Copyright (c) 2025 Andrey Volkov
@@ -439,17 +389,8 @@ echo $GEMINI_API_KEY
 export GEMINI_API_KEY="your-key"
 ```
 
-### Sandbox Failures
-If sandboxing fails, the agent will report which method was attempted. Try:
-1. Install the recommended sandbox tool (Firejail is easiest)
-2. Use Docker for maximum compatibility
-3. Set `sandbox_method: "subprocess"` in config.json (less secure)
-
-### Token Limits
-If hitting token limits:
-- Use smaller models (gemini-2.5-flash-lite)
-- Reduce `max_rounds` in config.json
-- Enable diffs mode (`--diffs`) to reduce context size
+### Sandbox Issues
+See **[README_SANDBOX.md](README_SANDBOX.md)** for installation, troubleshooting, and security considerations.
 
 ### Model Errors
 If seeing server errors or rate limits:
