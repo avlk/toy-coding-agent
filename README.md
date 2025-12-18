@@ -114,7 +114,16 @@ it knows plenty about programming languages, testing, reviewing code and it can 
 Barcode generator and validator. A Code-128 barcode generator is not the hardest thing to do. What it does is basically just take a table mapping input characters to the bar sequences, map input data to the output sequence and print it. Surprisingly, it is a hard task for an LLM, as it does not know any of these mappings by heart. To make the model use the right mapping, resource URLs are provided which are parsed by a Researcher sub-agent and fed into the prompt. The data from the researcher is filling up the context window and makes the model think about it, summarize the data, which generally reduces the amount of tokens and context left for thinking and writing correct code.
 
 ### 5. **qr** (Difficulty: Hardest)
-Generate QR codes that are readable by smartphones without using external QR encoding libraries. Requires research from external URLs to understand the QR code standard.While being of the same type as the **upc** task, it brings much more complexity: 1) The codes are using GF(2^8) math, and the model is generally not good at math, and it is much less good at Galois field calculations. GF(2^8) math can't be quickly proven by it's internal Python interpreter. It would be fair to say that the model knows about Galois fields, of course, it just misses some details here and there. 2) The code is two-dimensional and code point locations are much easier to show in a picture than to explain with words, but the model only receives words. It's really, really hard to understand the logic behind QR code pixel placement by only reading words. 3) The QR code uses Reed-Solomon error correction which is another layer of mathematical complexity for the model. 4) The model has to select and use some non-trivial way to test the code readability. Overall, after the model processes and understands everything it needs to complete the coding round, it has not too many tokens left for thinking and tool use. Gemini-2.5-flash model is usually quite quickly overwhelmed with the complexity, fails to run the code execution tool to proofread its code, generates faulty diffs and often repeats its previous errors. It is not impossible, but hard to reach the goals when not using Gemini-3-pro for this task.
+Generate QR codes that are readable by smartphones without using external QR encoding libraries. Requires research from external URLs to understand the QR code standard.
+
+While being of the same type as the **upc** task, it brings much more complexity: 
+
+1) The codes are using GF(2^8) math, and the model is generally not good at math, and it is much less good at Galois field calculations. GF(2^8) math can't be quickly proven by it's internal Python interpreter. It would be fair to say that the model knows about Galois fields, of course, it just misses some details here and there. 
+2) The code is two-dimensional and code point locations are much easier to show in a picture than to explain with words, but the model only receives words. It's really, really hard to understand the logic behind QR code pixel placement by only reading words. 
+3) The QR code uses Reed-Solomon error correction which is another layer of mathematical complexity for the model. 
+4) The model has to select and use some non-trivial way to test the code readability. 
+
+Overall, after the model processes and understands everything it needs to complete the coding round, it has not too many tokens left for thinking and tool use. Gemini-2.5-flash model is usually quite quickly overwhelmed with the complexity, fails to run the code execution tool to proofread its code, generates faulty diffs and often repeats its previous errors. It is not impossible, but hard to reach the goals when not using Gemini-3-pro for this task.
 
 
 ## Task Configuration
@@ -240,6 +249,47 @@ The agent follows a sophisticated iterative workflow combining multiple agentic 
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Main execution steps
+
+#### Refiner
+
+Task definition is composed of a high-level spec (tasks/\*/hl_spec.md) as a freeform text and acceptance criteria (tasks/\*/ac.md) as a list. This approach is inherited from the book example code. This differentiation defines a borderline between what we *would like* to have and what we *accept* as a valid solution. While both parts are equally important for the coder, meeting acceptance criteria is the main evaluation parameter for the reviewer.
+
+The `coding-agent` refines the spec and the AC by rethinking and re-generating them. It helps to sort out the following:
+- In a case we don't see that the AC are not matching the spec. 
+- In a case we don't see contradictions in what we ask from the agent. 
+- In a case we miss important assumptions.
+- In a case we think we require something from the model but we actually don't.
+
+It works as an Occam's razor.
+
+It is worth looking into the refined goals and spec files while the agent is running  (`{name}_refined_use_case.md`, `{name}_refined_goals.md`) to detect if some of your initial assumptions were so subtly stated that they were completely omitted by the refiner. 
+
+>**Example of a missing assumption**: We want the model to write a simple calculator. In the AC we require that the calculator performs for arithmetic operations and is fully functional. And assumption added in the refinement state may be: the program has an interactive CLI interface. Without this assumption the coder and the reviewer may have different views on what interface the calculator shall have.
+
+The Refiner works as a perfect manager in contract development, removing everything that is not directly required by the contract. If you think that the password manager it designs will by default comply with GDPR but you don't state it explicitly, the Refiner may completely omit this requirement.
+
+In some cases you are loading too much context into the spec and the Refiner may not like it. To push it through, run the agent with `--no-refine-goals`.
+
+Check out the prompt in `scripts/refine task.md`
+
+#### Researcher
+
+In come cases the model doesn't have enough context to complete the task. This is the case with `upc` and `qr` tasks, where the model has an idea about bar codes, QR codes, and some math behind it, but it misses some constant, tabular data and can't be sure about some things. 
+
+With no external context the model would hallucinate all the missing data and will either fail, or create an isolated solution that only passes its own tests but not work with any real world scenarios.
+
+The Researcher stage acts when some URLs are provided in the task's `config.json` file. It will summarize the text from these URLs and process the data provided in the tables and the text. 
+
+The way data processing is done is crucial: by default, the model may shorten the tables it finds in the pages, putting ellipsis into the output table. We ask it not to do so. 
+
+Then, the model tends to provide the table with all it's formatting. Each formatting character is a token and passing this result later into the coder will make it re-think the data all over again and will fill it's context window. As a solution, we ask the Researcher to provide all necessary data as Python language structures. With some luck these structures are quite well defined to be directly used in the code.
+
+Quite often the coder will only need a subset of data we receive from the URLs. To not overload the coder's context, we provide the Researcher with the use case and the goals and ask it to only output relevant data.
+
+> **Note**: It is worth mentioning, that while the Researcher is promptly asked to summarize all the documents and output the summary, it often fails to summarize the findings from multiple documents and output just **one** summary. If `N >>> 2` documents are provided, and the documents are big, the Researcher will likely provide N summaries instead of providing just one. This happens also in cases the documents tell basically tell the same thing. The model is overwhelmed and misses the last summarization stage. It is therefore better to provide just a few docs and expect that the model's pre-trained knowledge would bridge the gap if something is missing.
+
+Check out the prompt in `scripts/research.md`
 
 ### Agentic AI Patterns Used
 
