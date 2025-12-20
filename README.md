@@ -291,6 +291,36 @@ Quite often the coder will only need a subset of data we receive from the URLs. 
 
 Check out the prompt in `scripts/research.md`
 
+#### Coder - Initial run
+
+The Coder sub-agent is responsible for writing and refining the code.
+
+When there is no prior code, its prompt is composed of: a system prompt, the use case, the goals, the research data. It uses the system prompt from `scripts/coder create.md`. It shall output some reasoning and a code block.
+
+The reasoning is commonly said to be important in the prompt to make the model think deeper, and it seems to really work. What it also does is  channeling model's thoughts into some output stream: rather then placing the thoughts into some random place, it knows where and how to deliver it.
+
+> The output code block shall be formatted with triple-tilda markdown code block. It is important, as the model tends to use triple-backticks markdown code blocks in the python code it generates
+
+The initial `scripts/coder create.md` prompt asks not to complete the code, but rather create a skeleton of an app. There are _pro_ and _contra_ to this approach. 
+- If the model is asked to complete the code in one run, it may very well do it for simpler tasks, but it can also hit the limit of its capabilities and only output some starting part of the code. If it does so, it fails to communicate its architecture idea and assumptions to a next iteration, and the next run of the code agent will have to create some architecture assumptions again. Not only we make the model think more at the later stage, we also lose some of its thinking from the first iteration. 
+- The downside of this approach is that the model is generally weaker at creating changes to the code at a later stage: it can generate a 500 LoC python code in the first run, but will only output some patches of 1-50 LoC in each run later. If the task is huge, asking for just an architecture in the first run leaves too much to be done by subsequent runs.
+
+#### Coder - Subsequent runs
+
+When there is already code and review of the previous iteration, the Coder sub-agent is run with `scripts/coder fix.md` system prompt. Its prompt is composed of the system prompt, the use case, the goals, the research data, the previously generated code, code execution output, and review results. 
+
+The Coder shall output some reasoning and a code/diff block. Normally, the agent asks the model to generate unified diffs, unless `--no-diffs` parameter is supplied in the command line. A simple pre-processing is performed to the prompt to dynamically modify it for diff or full code output: lines starting with `?a` are only copied into the prompt for the diff variant, and lines starting with `?b` are only copied for the full code variant (prefixes are of course removed). 
+
+#### Coder - Multipart prompt
+
+Having so many data in the prompt is difficult for the model: it is hard for the model to follow the structure of the document, where goals and review results are relatively short, and previous code contains a lot of text. In addition, research data and review may both contain parts of Python code and as the complexity grows, it is harder for the model to stay focused and not mix up real code with quoutes from other parts of the prompt.
+
+To make it simpler for the model, the prompt is supplied in multiple parts: the prompt from `scripts/*.md`, the use case, goals and research data are all combined into one system prompt (making it cacheable and saving processing tokens), followed by the code, program output and review results as separate parts. **It is much easier for the model to receive data this way.**  
+
+
+
+
+
 ### Agentic AI Patterns Used
 
 #### 1. **Multi-Agent System**
