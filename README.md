@@ -8,6 +8,8 @@ The code for the chapter was written by [Mahtab Syed](https://www.linkedin.com/i
 
 I was curious to push this simple pattern to its limits. This project is still an educative example, but its size is beyond that of a book demo code.
 
+This project is also a playground to test different agentic patterns and prove their efficiency. Feel free to experiment, create new tasks, test new LLM models and contribute back.  
+
 In this file, you will find:
 
 - Overview of agent functioning
@@ -16,6 +18,8 @@ In this file, you will find:
 - Architecture of the main execution loop
 - Explanations for each execution stage
 - Cross-references to the Agentic Design Patterns used in the code
+
+Check out some of the solutions created by this agent here: [https://github.com/avlk/toy-coding-agent/releases/download/solutions/toy-coding-agent-solutions.zip](https://github.com/avlk/toy-coding-agent/releases/download/solutions/toy-coding-agent-solutions.zip).
 
 ## License
 
