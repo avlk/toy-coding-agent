@@ -554,12 +554,15 @@ def goals_met(config: dict, context: Context) -> tuple[bool, int]:
 
     try:
         json_blocks = find_code_blocks(response_text, delimiter="```", language="json")
-        json_block = to_string(clean_code_block(json_blocks[0]))
-        response_json = json.loads(json_block)
-        result = response_json.get("result", "No").lower()
-        score = response_json.get("score", 0)
-        return (result == "yes", score)
-    except json.JSONDecodeError:
+        if json_blocks:
+            json_block = to_string(clean_code_block(json_blocks[0]))
+            response_json = json.loads(json_block)
+            result = response_json.get("result", "No").lower()
+            score = response_json.get("score", 0)
+            return (result == "yes", score)
+        else:
+            print(f"⚠️  No code blocks found in response")
+    except (json.JSONDecodeError, IndexError) as e:
         print(f"⚠️  Failed to parse goals check response as JSON: {response_text}")
 
     return (False, 0)

@@ -302,7 +302,7 @@ class TestProgressCheck:
         ctx.start_iteration()
         ctx.current.score = 45
         
-        result = progress_check(ctx)
+        result = progress_check(ctx, reset_threshold=3)
         
         assert result is None
     
@@ -317,7 +317,7 @@ class TestProgressCheck:
         ctx.start_iteration()
         ctx.current.score = 50
         
-        result = progress_check(ctx)
+        result = progress_check(ctx, reset_threshold=3)
         
         assert result is None
     
@@ -332,7 +332,7 @@ class TestProgressCheck:
         ctx.start_iteration()
         ctx.current.score = 15
         
-        result = progress_check(ctx)
+        result = progress_check(ctx, reset_threshold=3)
         
         assert result == 0  # Index of best score
     
@@ -347,7 +347,7 @@ class TestProgressCheck:
         ctx.start_iteration()
         ctx.current.score = 15
         
-        result = progress_check(ctx)
+        result = progress_check(ctx, reset_threshold=3)
         
         assert result == 1  # Rightmost best score index
     
@@ -362,7 +362,7 @@ class TestProgressCheck:
         ctx.start_iteration()
         ctx.current.score = 15
         
-        result = progress_check(ctx)
+        result = progress_check(ctx, reset_threshold=3)
         
         # With 8 total scores (7 iterations + current), best at index 3
         # best_index (3) < len(scores) - 3 (5) is True, so should return index
@@ -379,7 +379,7 @@ class TestProgressCheck:
         ctx.start_iteration()
         ctx.current.score = 5
         
-        result = progress_check(ctx)
+        result = progress_check(ctx, reset_threshold=3)
         
         # Should return index as best is >3 from end
         assert result == 3
@@ -396,7 +396,7 @@ class TestProgressCheck:
         ctx.current.score = 50
         
         # Should not crash, None values treated as 0
-        result = progress_check(ctx)
+        result = progress_check(ctx, reset_threshold=3)
         
         # Scores: [0, 50, 60, 0, 55, 50] - 6 total, best (60) at index 2
         # best_index (2) < len(scores) - 3 (3) is True, so returns 2
@@ -642,6 +642,8 @@ class TestGoalsMet:
         ctx.current.feedback = "feedback"
         config = {"utility_model": "model"}
         
+        # Should return (False, 0) even when IndexError occurs
+        # due to empty json_blocks list
         met, score = goals_met(config, ctx)
         
         assert met is False
@@ -966,10 +968,13 @@ class TestFeedback:
         with patch.object(ctx, 'save_to') as mock_save:
             feedback(config, ctx)
         
-        # Should save review file
-        mock_save.assert_called_once()
-        assert mock_save.call_args[0][0] == "{name}_review_v{iter}.txt"
-        assert mock_save.call_args[0][1] == "Good code"
+        # Should save both prompt file and review file
+        assert mock_save.call_count == 2
+        # First call saves the prompt
+        assert mock_save.call_args_list[0][0][0] == "{name}_review_prompt_{iter}.md"
+        # Second call saves the review
+        assert mock_save.call_args_list[1][0][0] == "{name}_review_v{iter}.txt"
+        assert mock_save.call_args_list[1][0][1] == "Good code"
     
     @patch('coding_agent.llm_query')
     @patch('coding_agent.load_file')
