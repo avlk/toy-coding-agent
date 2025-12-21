@@ -317,9 +317,77 @@ Having so many data in the prompt is difficult for the model: it is hard for the
 
 To make it simpler for the model, the prompt is supplied in multiple parts: the prompt from `scripts/*.md`, the use case, goals and research data are all combined into one system prompt (making it cacheable and saving processing tokens), followed by the code, program output and review results as separate parts. **It is much easier for the model to receive data this way.**  
 
+#### Code quality gate
 
+`code_quality_gate()` is called to check the model's code/diff output blocks. The model's output generation sometimes misoperates and generates long sequences of the same character (`kkkkkkk`...), or repeats the same line or a block of lines multiple times until it hits its output token limit. Continuing iterations from such a code makes no sense and the iteration is restarted.
 
+Current `code_quality_gate()` implementations only detects very long lines and sequences of repeating lines as bad quality, which is sufficient to detect failures in 90% of cases.
 
+#### Unified Diff
+
+The agent accepts unified diffs as model output. When fixing bugs or adding features, a diff format allows to limit the number of output tokens. See `./patch.py` for implementation.
+
+The agent accepts both normal unified diffs and diffs without line number information (in [aider udiff syntax](https://aider.chat/docs/more/edit-formats.html), alhough not using aider code). Line numbers are not used to match chunks, as LLMs are typically bad at counting and output wrong line numbers anyway. As the agent only works on one file, all chunks shall be related to the same file.
+
+There are also certain guardrails in place to mitigate issues in LLM-generated diffs:
+- Chunks are matched in a search-and-replace way, the header information is not used;
+- The code reduces the number of starting and leading context lines, as the model often outputs too many of them, making it hard to match the chunk;
+- The code tries to fix issues where the model puts `+`, `-` and ` ` incorrectly;
+- The code tries to do fuzzy matching;
+- If some chunks can't be applied, the agent continues anyway.
+
+While a unified diff is reducing the number of output tokens, it creates a hurdle in the content generation process for the model, and it may be beneficial to disable it when the model is operating close to it's full capacity.
+
+#### Code execution
+
+Code received from the model is executed in a sandboxed environment. Its `stdout`, `stderr`, and an exit code are then provided to the Reviewer sub-agent as well to the next Coder run. 
+
+There are some reasons to use local execution environment and not rely on the `code_execution` tool of Gemini, which is also capable of executing Python code:
+- We want a resulting code that runs on the local machine;
+- We want a precise way to of evaluating the code generation; 
+- The model seems reluctant to run its own code before outputting, especially when the task is complex. It tends to fully hallucinate the code output, and it is then not suitable for the Review: while hallucinated output shows that all tests pass, in reality it may not be so. Passing these hallucinated results into Reviewer and Coder model would make it even worse.
+
+It it actually very benefitial to have the model execute its code before returning it and we ask it to do so in the `scripts/coder fix.md` prompt. In a case it is actually executing the code, the quality metric of the code increases in bigger steps per iteration, and it only grows slowly when the model does not execute. It's like the model is doing several internal "fix-test-repeat" iterations in one run when it executes the code, and only one when it relies on external execution. It is however hard to convince the model to _always_ execute the code.
+
+#### Syntax fix
+
+If local code execution returns SyntaxError or the like, one extra post-processing step is performed to try and fix this error.
+
+It mimics a programmer, who basically wrote correct code, and then fixes small errors here and there. The mental load to write the code and to fix issues are very different. It is much easier to fix smaller error if we stop thinking about the architecture, the goals etc.
+
+The Syntax fix sub-agent prompt (`scripts/syntax fix.md`) is much easier than that of a Coder sub-agent. What it means in practice is the Syntax fix sub-agent is able to fix most issues quickly and with low token count. Using the full Coder+Reviewer cycle would have costed much more tokens.
+
+> The Coder sub-agent tends to repeat its own errors again and again, even when specifically asked to fix the issue. With Syntax fix it is mitigated.
+
+#### Reviewer
+
+The Reviewer is a sub-agent tasked to evaluate the code and the program output against the goals. The prompt is `scripts/reviewer.md`.
+
+If the Reviewer has different context or assumptions compared to that of the Coder, it may cyclically ask the Coder change something according to its vision. The Coder will follow what is there in its own context and repeat the implementation which the Reviewer does not like, creating a loop of misunderstanding. Hence it is important that the Coder and the Reviewer have the same context. That's why the Reviewer is provided with the use case description and  research results, and it also sees any assumptions added to the goals by the Refiner sub-agent.
+
+The Reviewer tends to write essays about the code, which we don't want, and we ask it to generate a short TODO list with some actionable items.
+
+It may happen that the Reviewer is asking for too many changes and then the Coder can never do what was asked. To mitigate that, the Reviewer is provided with its own previous review. If it sees that some items from the previous iteration are not fixed, it limits the TODO list to these items to make sure they are fixed.
+
+The Reviewer sub-agent is likely to consume nearly equal amounts of tokens as the Coder sub-agent.
+
+It may be beneficial to run both Coder and Reviewer with the same Gemini model. Having that ensures that both Coder and Reviewer have consensus about the points which are not in the Research, the Goals, or the assumptions created by the Refiner. This is not required when the task is fully and unambiguously defined and enough research data is provided.
+
+#### Goals check
+
+A `scripts/goals check.md` script is used to run a Goals check sub-agent, which checks if the goals are fully met. The agent outputs two values: a binary YES/NO for the goal completion, and a 0-100 completion score.
+
+In case YES is returned, the main cycle is completed and the program proceeds to the final code generation.
+
+In case NO is returned, the iteration is added to the iteration list along with the completion score. The list is maintained by a `Context` class instance.
+
+#### Progress check
+
+A `progress_check()` function is called to check if the completion score improves over iterations. If it is not the case and the completion score is actually worse than it was N iterations ago (for example: 75, 45, 55, 30), the execution is reset to the results of that best iteration (in the example: 75) and continues again from there. The idea behind that some of the steps following that best iteration just made a bad architectural choice which the model is not capable of mitigating. It is easier to retry again from that point.
+
+The number of tolerable unsuccessful iterations is set with `--reset <N>` command line parameter and defaults to 3. To disable rollback logic, use `--no-reset`.
+
+The `progress_check()` logic can actually improve chances to complete the task for mid-range models, like Gemini-2.5-flash.
 
 ### Agentic AI Patterns Used
 
