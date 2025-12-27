@@ -1,6 +1,62 @@
 # Sandboxed Code Execution
 
-The coding agent now supports sandboxed execution of generated code for improved security.
+The coding agent now supports sandboxed execution of generated code for improved security. There are two execution modes available:
+
+1. **Single-file execution**: For simple scripts passed as code strings
+2. **Project-based execution**: For multi-file Python projects with dependencies
+
+## Execution Modes
+
+### Single-File Execution (Original)
+
+Use `execute_sandboxed()` for executing single Python files:
+
+```python
+from sandbox_execution import execute_sandboxed
+
+result = execute_sandboxed(
+    code="print('Hello World')",
+    method='auto',
+    timeout=30,
+    args='arg1 arg2',  # optional command-line args
+    venv_path='/path/to/venv',  # optional
+    extra_packages=['requests', 'numpy']  # optional
+)
+```
+
+### Project-Based Execution (New)
+
+Use `execute_sandboxed_project()` for multi-file Python projects:
+
+```python
+from sandbox_execution import execute_sandboxed_project
+
+result = execute_sandboxed_project(
+    project='./my_project',  # path to project directory
+    cmd_args='main.py --verbose arg1',  # entry point + arguments
+    method='auto',
+    timeout=30
+)
+```
+
+**Project structure:**
+```
+./my_project/
+├── main.py           # entry point
+├── module1.py        # imported modules
+├── module2.py
+├── lib/
+│   └── utils.py
+├── .venv/            # auto-created if doesn't exist
+└── requirements.txt  # auto-installed if present
+```
+
+**Features:**
+- ✅ Automatic venv creation at `{project}/.venv`
+- ✅ Auto-installs from `requirements.txt`
+- ✅ Supports nested module imports
+- ✅ Venv reused across multiple executions
+- ✅ Full path isolation per sandbox method
 
 ## Sandbox Methods
 
