@@ -797,6 +797,161 @@ class TestPatchProject:
             assert result == True
             empty_file = project_dir / "empty.txt"
             assert empty_file.exists()
+    
+    def test_delete_file(self):
+        """Test deleting a file from patch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            
+            # Create a file to delete
+            delete_file = project_dir / "todelete.py"
+            delete_file.write_text("def old():\n    pass\n")
+            
+            # Patch to delete the file
+            patch_lines = [
+                "--- a/todelete.py",
+                "+++ /dev/null",
+                "@@ -1,2 +0,0 @@",
+                "-def old():",
+                "-    pass"
+            ]
+            
+            result = patch_project(project_dir, patch_lines, fuzziness=0)
+            
+            assert result == True
+            assert not delete_file.exists()
+    
+    def test_delete_multiple_files(self):
+        """Test deleting multiple files in one patch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            
+            # Create files to delete
+            file1 = project_dir / "delete1.py"
+            file1.write_text("x = 1\n")
+            
+            file2 = project_dir / "delete2.py"
+            file2.write_text("y = 2\n")
+            
+            patch_lines = [
+                "--- a/delete1.py",
+                "+++ /dev/null",
+                "@@ -1,1 +0,0 @@",
+                "-x = 1",
+                "--- a/delete2.py",
+                "+++ /dev/null",
+                "@@ -1,1 +0,0 @@",
+                "-y = 2"
+            ]
+            
+            result = patch_project(project_dir, patch_lines, fuzziness=0)
+            
+            assert result == True
+            assert not file1.exists()
+            assert not file2.exists()
+    
+    def test_mixed_create_modify_delete(self):
+        """Test patch with create, modify, and delete operations."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            
+            # Create files
+            modify_file = project_dir / "modify.py"
+            modify_file.write_text("old\n")
+            
+            delete_file = project_dir / "delete.py"
+            delete_file.write_text("remove\n")
+            
+            patch_lines = [
+                # Modify existing file
+                "--- a/modify.py",
+                "+++ b/modify.py",
+                "@@ -1,1 +1,1 @@",
+                "-old",
+                "+new",
+                # Delete file
+                "--- a/delete.py",
+                "+++ /dev/null",
+                "@@ -1,1 +0,0 @@",
+                "-remove",
+                # Create new file
+                "--- /dev/null",
+                "+++ b/create.py",
+                "@@ -0,0 +1,1 @@",
+                "+fresh"
+            ]
+            
+            result = patch_project(project_dir, patch_lines, fuzziness=0)
+            
+            assert result == True
+            # Modified file
+            assert modify_file.exists()
+            assert "new" in modify_file.read_text()
+            # Deleted file
+            assert not delete_file.exists()
+            # Created file
+            create_file = project_dir / "create.py"
+            assert create_file.exists()
+            assert "fresh" in create_file.read_text()
+    
+    def test_delete_nonexistent_file(self):
+        """Test deleting a file that doesn't exist (should not fail)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            
+            patch_lines = [
+                "--- a/nonexistent.py",
+                "+++ /dev/null",
+                "@@ -1,1 +0,0 @@",
+                "-content"
+            ]
+            
+            result = patch_project(project_dir, patch_lines, fuzziness=0)
+            
+            # Should succeed (file already doesn't exist)
+            assert result == True
+    
+    def test_deleted_file_flag_detection(self):
+        """Test that is_deleted_file flag is correctly set when parsing patches."""
+        patch_lines = [
+            "--- a/oldfile.py",
+            "+++ /dev/null",
+            "@@ -1,2 +0,0 @@",
+            "-line1",
+            "-line2"
+        ]
+        
+        hunks = extract_hunks(patch_lines)
+        
+        assert len(hunks) == 1
+        assert hunks[0].is_deleted_file == True
+        assert hunks[0].filename == "oldfile.py"
+    
+    def test_delete_file_in_subdirectory(self):
+        """Test deleting a file in a subdirectory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            
+            # Create nested file
+            subdir = project_dir / "src" / "utils"
+            subdir.mkdir(parents=True)
+            delete_file = subdir / "helper.py"
+            delete_file.write_text("def help():\n    pass\n")
+            
+            patch_lines = [
+                "--- a/src/utils/helper.py",
+                "+++ /dev/null",
+                "@@ -1,2 +0,0 @@",
+                "-def help():",
+                "-    pass"
+            ]
+            
+            result = patch_project(project_dir, patch_lines, fuzziness=0)
+            
+            assert result == True
+            assert not delete_file.exists()
+            # Parent directories should still exist
+            assert subdir.exists()
 
 
 if __name__ == "__main__":

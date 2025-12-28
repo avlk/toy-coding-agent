@@ -39,6 +39,7 @@ class Hunk:
         
         self.filename = filename
         self.is_new_file = False  # Flag for file creation
+        self.is_deleted_file = False  # Flag for file deletion
         self.match = []
         self.replace = []
 
@@ -99,6 +100,9 @@ class Hunk:
     def empty(self) -> bool:
         # A hunk is not empty if it's for a new file with content to add
         if self.is_new_file and self.replace_count() > 0:
+            return False
+        # A hunk is not empty if it's for a file deletion with content to remove
+        if self.is_deleted_file and self.match_count() > 0:
             return False
         return self.match_count() == 0 
 
@@ -180,44 +184,87 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
     current_hunk_start = None
     current_filename = None
     is_new_file = False
+    is_deleted_file = False
     
     for i, line in enumerate(patch):
-        # Detect file creation: --- /dev/null or --- a/dev/null
+        # When we see ---, we're starting a new file section
+        # Reset flags and prepare to determine file operation type
         if line.startswith('---'):
-            parts = line.split(None, 1)
-            if len(parts) > 1 and '/dev/null' in parts[1]:
-                is_new_file = True
-            else:
-                is_new_file = False
-        
-        # Extract filename from +++ line (unified diff format)
-        if line.startswith('+++'):
-            # Format: +++ b/path/to/file or +++ path/to/file
-            parts = line.split(None, 1)
-            if len(parts) > 1:
-                filename = parts[1]
-                # Remove 'b/' prefix if present
-                if filename.startswith('b/'):
-                    filename = filename[2:]
-                # Skip /dev/null as filename
-                if '/dev/null' not in filename:
-                    current_filename = filename
-        
-        if line.startswith('@@') or line.startswith('+++') or line.startswith('---'):
+            # First, save any pending hunk
             if current_hunk_start is not None:
                 h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename)
                 if is_new_file:
                     h.is_new_file = True
+                if is_deleted_file:
+                    h.is_deleted_file = True
                 hunks.append(h)
-            current_hunk_start = None
-
-        if line.startswith('@@'):
+                current_hunk_start = None
+            
+            # Reset flags for new file section
+            is_new_file = False
+            is_deleted_file = False
+            current_filename = None
+            
+            # Detect file creation: --- /dev/null or --- a/dev/null
+            parts = line.split(None, 1)
+            if len(parts) > 1:
+                if '/dev/null' in parts[1]:
+                    is_new_file = True
+                else:
+                    # Extract filename from --- line (for normal edits and deletions)
+                    filename = parts[1]
+                    if filename.startswith('a/'):
+                        filename = filename[2:]
+                    if '/dev/null' not in filename:
+                        current_filename = filename
+        
+        # Detect file deletion or get filename for normal edits
+        elif line.startswith('+++'):
+            # Save any pending hunk (shouldn't normally happen here)
+            if current_hunk_start is not None:
+                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename)
+                if is_new_file:
+                    h.is_new_file = True
+                if is_deleted_file:
+                    h.is_deleted_file = True
+                hunks.append(h)
+                current_hunk_start = None
+            
+            parts = line.split(None, 1)
+            if len(parts) > 1:
+                if '/dev/null' in parts[1]:
+                    # This is a file deletion
+                    is_deleted_file = True
+                    is_new_file = False
+                    # Filename should already be set from --- line
+                else:
+                    # Normal file or new file
+                    filename = parts[1]
+                    if filename.startswith('b/'):
+                        filename = filename[2:]
+                    if '/dev/null' not in filename:
+                        current_filename = filename
+        
+        # When we see @@, start recording a new hunk
+        elif line.startswith('@@'):
+            # Save any pending hunk first
+            if current_hunk_start is not None:
+                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename)
+                if is_new_file:
+                    h.is_new_file = True
+                if is_deleted_file:
+                    h.is_deleted_file = True
+                hunks.append(h)
+            
             current_hunk_start = i
 
+    # Don't forget the last hunk
     if current_hunk_start is not None:
         h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:], current_filename)
         if is_new_file:
             h.is_new_file = True
+        if is_deleted_file:
+            h.is_deleted_file = True
         hunks.append(h)
 
     return hunks
@@ -264,6 +311,24 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
         except ValueError:
             print(f"[ERROR] File path {file_path} is outside project directory {project_dir}")
             all_success = False
+            continue
+        
+        # Check if this is a file deletion operation
+        is_file_deletion = any(hunk.is_deleted_file for hunk in file_hunks)
+        
+        if is_file_deletion:
+            if not file_path.exists():
+                print(f"[WARNING] File {file_path} does not exist (already deleted?)")
+                # Consider this a success - file is already gone
+                continue
+            
+            print(f"[DELETE] Deleting file {file_path}")
+            try:
+                file_path.unlink()
+                print(f"[DELETED] {file_path}")
+            except Exception as e:
+                print(f"[ERROR] Failed to delete {file_path}: {e}")
+                all_success = False
             continue
         
         # Check if file exists
