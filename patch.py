@@ -1,5 +1,6 @@
 import re
 import Levenshtein
+from pathlib import Path
 
 # Hunk header for a normal unified diff
 UNIFIED_DIFF_HUNK_HEADER_REGEX = r'@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@'
@@ -26,7 +27,7 @@ class Hunk:
     MAX_STARTING_CONTEXT = 3
     MAX_TRAILING_CONTEXT = 3
 
-    def __init__(self, header: str, lines: list[str]):
+    def __init__(self, header: str, lines: list[str], filename: str = None):
         # Extract original header info
         match = re.match(UNIFIED_DIFF_HUNK_HEADER_REGEX, header)
         if match:
@@ -36,6 +37,7 @@ class Hunk:
             self.start_original = 0
             self.start_new = 0
         
+        self.filename = filename
         self.match = []
         self.replace = []
 
@@ -172,10 +174,23 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
     # Identify all hunks and add them to the list
     hunks = []
     current_hunk_start = None
+    current_filename = None
+    
     for i, line in enumerate(patch):
+        # Extract filename from +++ line (unified diff format)
+        if line.startswith('+++'):
+            # Format: +++ b/path/to/file or +++ path/to/file
+            parts = line.split(None, 1)
+            if len(parts) > 1:
+                filename = parts[1]
+                # Remove 'b/' prefix if present
+                if filename.startswith('b/'):
+                    filename = filename[2:]
+                current_filename = filename
+        
         if line.startswith('@@') or line.startswith('+++') or line.startswith('---'):
             if current_hunk_start is not None:
-                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i])
+                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename)
                 hunks.append(h)
             current_hunk_start = None
 
@@ -183,9 +198,125 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
             current_hunk_start = i
 
     if current_hunk_start is not None:
-        hunks.append(Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:]))
+        hunks.append(Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:], current_filename))
 
     return hunks
+
+def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0) -> bool:
+    """
+    Apply a patch to a project directory.
+    
+    Args:
+        project_dir: Root directory of the project (Path object)
+        patch_lines: Lines of the unified diff patch
+        fuzziness: Level of fuzzy matching (0=exact, 1=ignore whitespace, 2=allow small differences)
+    
+    Returns:
+        True if all hunks were applied successfully, False otherwise
+    """
+    project_dir = project_dir.resolve()  # Get absolute path
+    hunk_list = extract_hunks(patch_lines)
+    
+    # Group hunks by filename
+    hunks_by_file = {}
+    for hunk in hunk_list:
+        if hunk.filename is None:
+            print(f"[WARNING] Hunk without filename: {hunk}")
+            continue
+        if hunk.filename not in hunks_by_file:
+            hunks_by_file[hunk.filename] = []
+        hunks_by_file[hunk.filename].append(hunk)
+    
+    print(f"Extracted {len(hunk_list)} hunks for {len(hunks_by_file)} files")
+    
+    all_success = True
+    
+    # Process each file
+    for filename, file_hunks in hunks_by_file.items():
+        print(f"\nProcessing file: {filename}")
+        
+        # Construct and validate file path
+        file_path = (project_dir / filename).resolve()
+        
+        # Security check: ensure file is within project directory
+        try:
+            file_path.relative_to(project_dir)
+        except ValueError:
+            print(f"[ERROR] File path {file_path} is outside project directory {project_dir}")
+            all_success = False
+            continue
+        
+        # Check if file exists
+        if not file_path.exists():
+            print(f"[ERROR] File {file_path} does not exist")
+            all_success = False
+            continue
+        
+        # Load file content
+        try:
+            with open(file_path, 'r') as f:
+                code_lines = f.read().splitlines()
+        except Exception as e:
+            print(f"[ERROR] Failed to read {file_path}: {e}")
+            all_success = False
+            continue
+        
+        # Build application list for this file
+        application_list = []
+        failed_hunks = 0
+        
+        for hunk in file_hunks:
+            if hunk.empty():
+                print("[SKIP] Useless hunk")
+                continue
+            
+            hunk_start = None
+            for fuzziness_level in range(fuzziness + 1):
+                hunk_start = hunk.match_code(code_lines, fuzziness_level)
+                if hunk_start is not None:
+                    if fuzziness_level > 0:
+                        print(f"[WARNING] Hunk {hunk} applied with fuzziness {fuzziness_level}")
+                    break
+            
+            if hunk_start is None:
+                print(f"[FAIL] Can't apply hunk {hunk}")
+                failed_hunks += 1
+            else:
+                application_list.append((hunk_start, hunk))
+        
+        # Sort application_list by start position
+        application_list.sort(key=lambda x: x[0])
+        
+        # Apply hunks
+        source_offset = 0
+        for hunk_start, hunk in application_list:
+            start = hunk_start + source_offset
+            code_lines[start:start + hunk.match_count()] = hunk.replace
+            source_offset += hunk.replace_count() - hunk.match_count()
+        
+        # Report results for this file
+        if failed_hunks > 0:
+            print(f"[ERROR] Failed to apply {failed_hunks}/{len(file_hunks)} hunks for {filename}")
+            all_success = False
+        else:
+            print(f"[OK] Successfully applied {len(file_hunks)} hunks for {filename}")
+            
+            # Save the modified file
+            try:
+                with open(file_path, 'w') as f:
+                    f.write('\n'.join(code_lines))
+                print(f"[SAVED] {file_path}")
+            except Exception as e:
+                print(f"[ERROR] Failed to save {file_path}: {e}")
+                all_success = False
+    
+    if all_success:
+        print(f"\n✓ Patch application complete. All hunks applied successfully.")
+    else:
+        print(f"\n✗ Patch application failed. Some hunks could not be applied.")
+    
+    return all_success
+
 
 def patch_code(code_lines: list[str], patch_lines: list[str], fuzziness: int = 0):
     hunk_list = extract_hunks(patch_lines)
@@ -227,6 +358,7 @@ def patch_code(code_lines: list[str], patch_lines: list[str], fuzziness: int = 0
     else:
         print(f"Patch application complete. All {len(hunk_list)} hunks applied successfully.")
     return failed_hunks == 0
+
 
 if __name__ == "__main__":
 
