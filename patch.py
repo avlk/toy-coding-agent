@@ -1,6 +1,13 @@
 import re
 import Levenshtein
 from pathlib import Path
+from enum import Enum
+
+class ApplicationMode(Enum):
+    """Mode for applying a hunk: modify existing file, create new file, or delete file."""
+    MODIFY = "modify"
+    CREATE = "create"
+    DELETE = "delete"
 
 # Hunk header for a normal unified diff
 UNIFIED_DIFF_HUNK_HEADER_REGEX = r'@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@'
@@ -27,7 +34,7 @@ class Hunk:
     MAX_STARTING_CONTEXT = 3
     MAX_TRAILING_CONTEXT = 3
 
-    def __init__(self, header: str, lines: list[str], filename: str = None):
+    def __init__(self, header: str, lines: list[str], filename: str = None, application_mode: ApplicationMode = ApplicationMode.MODIFY):
         # Extract original header info
         match = re.match(UNIFIED_DIFF_HUNK_HEADER_REGEX, header)
         if match:
@@ -38,8 +45,7 @@ class Hunk:
             self.start_new = 0
         
         self.filename = filename
-        self.is_new_file = False  # Flag for file creation
-        self.is_deleted_file = False  # Flag for file deletion
+        self.application_mode = application_mode
         self.match = []
         self.replace = []
 
@@ -99,10 +105,10 @@ class Hunk:
 
     def empty(self) -> bool:
         # A hunk is not empty if it's for a new file with content to add
-        if self.is_new_file and self.replace_count() > 0:
+        if self.application_mode == ApplicationMode.CREATE and self.replace_count() > 0:
             return False
         # A hunk is not empty if it's for a file deletion with content to remove
-        if self.is_deleted_file and self.match_count() > 0:
+        if self.application_mode == ApplicationMode.DELETE and self.match_count() > 0:
             return False
         return self.match_count() == 0 
 
@@ -183,33 +189,27 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
     hunks = []
     current_hunk_start = None
     current_filename = None
-    is_new_file = False
-    is_deleted_file = False
+    current_mode = ApplicationMode.MODIFY
     
     for i, line in enumerate(patch):
         # When we see ---, we're starting a new file section
-        # Reset flags and prepare to determine file operation type
+        # Reset state and prepare to determine file operation type
         if line.startswith('---'):
             # First, save any pending hunk
             if current_hunk_start is not None:
-                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename)
-                if is_new_file:
-                    h.is_new_file = True
-                if is_deleted_file:
-                    h.is_deleted_file = True
+                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename, current_mode)
                 hunks.append(h)
                 current_hunk_start = None
             
-            # Reset flags for new file section
-            is_new_file = False
-            is_deleted_file = False
+            # Reset state for new file section
+            current_mode = ApplicationMode.MODIFY
             current_filename = None
             
             # Detect file creation: --- /dev/null or --- a/dev/null
             parts = line.split(None, 1)
             if len(parts) > 1:
                 if '/dev/null' in parts[1]:
-                    is_new_file = True
+                    current_mode = ApplicationMode.CREATE
                 else:
                     # Extract filename from --- line (for normal edits and deletions)
                     filename = parts[1]
@@ -222,11 +222,7 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
         elif line.startswith('+++'):
             # Save any pending hunk (shouldn't normally happen here)
             if current_hunk_start is not None:
-                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename)
-                if is_new_file:
-                    h.is_new_file = True
-                if is_deleted_file:
-                    h.is_deleted_file = True
+                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename, current_mode)
                 hunks.append(h)
                 current_hunk_start = None
             
@@ -234,8 +230,7 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
             if len(parts) > 1:
                 if '/dev/null' in parts[1]:
                     # This is a file deletion
-                    is_deleted_file = True
-                    is_new_file = False
+                    current_mode = ApplicationMode.DELETE
                     # Filename should already be set from --- line
                 else:
                     # Normal file or new file
@@ -249,22 +244,14 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
         elif line.startswith('@@'):
             # Save any pending hunk first
             if current_hunk_start is not None:
-                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename)
-                if is_new_file:
-                    h.is_new_file = True
-                if is_deleted_file:
-                    h.is_deleted_file = True
+                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename, current_mode)
                 hunks.append(h)
             
             current_hunk_start = i
 
     # Don't forget the last hunk
     if current_hunk_start is not None:
-        h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:], current_filename)
-        if is_new_file:
-            h.is_new_file = True
-        if is_deleted_file:
-            h.is_deleted_file = True
+        h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:], current_filename, current_mode)
         hunks.append(h)
 
     return hunks
@@ -314,9 +301,10 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
             continue
         
         # Check if this is a file deletion operation
-        is_file_deletion = any(hunk.is_deleted_file for hunk in file_hunks)
+        delete_op = any(hunk.application_mode == ApplicationMode.DELETE for hunk in file_hunks)
+        create_op = any(hunk.application_mode == ApplicationMode.CREATE for hunk in file_hunks)
         
-        if is_file_deletion:
+        if delete_op:
             if not file_path.exists():
                 print(f"[WARNING] File {file_path} does not exist (already deleted?)")
                 # Consider this a success - file is already gone
@@ -330,22 +318,17 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
                 print(f"[ERROR] Failed to delete {file_path}: {e}")
                 all_success = False
             continue
-        
-        # Check if file exists
-        if not file_path.exists():
-            # Check if this is a file creation patch
-            is_file_creation = any(hunk.is_new_file or hunk.match_count() == 0 for hunk in file_hunks)
-            
-            if is_file_creation:
-                print(f"[CREATE] Creating new file {file_path}")
-                # Ensure parent directory exists
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                # Start with empty file content
-                code_lines = []
-            else:
-                print(f"[ERROR] File {file_path} does not exist")
+        elif create_op:
+            if file_path.exists():
+                print(f"[WARNING] File {file_path} already exists (can't overwrite)")
                 all_success = False
                 continue
+
+            print(f"[CREATE] Creating new file {file_path}")
+            # Ensure parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            # Start with empty file content
+            code_lines = []
         else:
             # Load file content
             try:
@@ -366,7 +349,7 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
                 continue
             
             # For file creation, apply at position 0 without matching
-            if hunk.is_new_file or (hunk.match_count() == 0 and not code_lines):
+            if hunk.application_mode == ApplicationMode.CREATE:
                 application_list.append((0, hunk))
                 continue
             

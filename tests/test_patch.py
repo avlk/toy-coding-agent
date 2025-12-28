@@ -11,7 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from patch import (
     is_unified_diff, is_unified_diff_no_counts,
-    Hunk, extract_hunks, patch_code, patch_project
+    Hunk, extract_hunks, patch_code, patch_project,
+    ApplicationMode
 )
 import tempfile
 import os
@@ -750,7 +751,7 @@ class TestPatchProject:
             assert "fresh_content" in new_file.read_text()
     
     def test_new_file_flag_detection(self):
-        """Test that is_new_file flag is correctly set when parsing patches."""
+        """Test that application_mode is correctly set to CREATE when parsing new file patches."""
         patch_lines = [
             "--- /dev/null",
             "+++ b/newfile.py",
@@ -762,11 +763,11 @@ class TestPatchProject:
         hunks = extract_hunks(patch_lines)
         
         assert len(hunks) == 1
-        assert hunks[0].is_new_file == True
+        assert hunks[0].application_mode == ApplicationMode.CREATE
         assert hunks[0].filename == "newfile.py"
     
     def test_existing_file_flag_not_set(self):
-        """Test that is_new_file flag is False for regular patches."""
+        """Test that application_mode is MODIFY for regular patches."""
         patch_lines = [
             "--- a/existing.py",
             "+++ b/existing.py",
@@ -778,7 +779,7 @@ class TestPatchProject:
         hunks = extract_hunks(patch_lines)
         
         assert len(hunks) == 1
-        assert hunks[0].is_new_file == False
+        assert hunks[0].application_mode == ApplicationMode.MODIFY
     
     def test_create_empty_file(self):
         """Test creating an empty file (edge case)."""
@@ -912,7 +913,7 @@ class TestPatchProject:
             assert result == True
     
     def test_deleted_file_flag_detection(self):
-        """Test that is_deleted_file flag is correctly set when parsing patches."""
+        """Test that application_mode is correctly set to DELETE when parsing file deletion patches."""
         patch_lines = [
             "--- a/oldfile.py",
             "+++ /dev/null",
@@ -924,7 +925,7 @@ class TestPatchProject:
         hunks = extract_hunks(patch_lines)
         
         assert len(hunks) == 1
-        assert hunks[0].is_deleted_file == True
+        assert hunks[0].application_mode == ApplicationMode.DELETE
         assert hunks[0].filename == "oldfile.py"
     
     def test_delete_file_in_subdirectory(self):
