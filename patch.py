@@ -178,12 +178,60 @@ class Hunk:
         return f"(start_original={self.start_original}, start_new={self.start_new}, match_count={self.match_count()}, replace_count={self.replace_count()})"
 
 
+def parse_patch_cmd(line: str) -> tuple[str | None, str | None]:
+    """
+    Parse a unified diff command line.
+    
+    Args:
+        line: A line from a unified diff
+    
+    Returns:
+        A tuple (cmd, arg) where:
+        - For '---' lines: ('---', normalized_filename_or_/dev/null)
+        - For '+++' lines: ('+++', normalized_filename_or_/dev/null)
+        - For '@@' lines: ('@@', content_between_@@_markers)
+        - For other lines: (None, None)
+    """
+    # Handle --- and +++ lines (file markers)
+    if line.startswith('---') or line.startswith('+++'):
+        cmd = line[:3]
+        
+        parts = line.split(None, 1)
+        if len(parts) > 1:
+            filename = parts[1]
+            # Remove any prefix unless the path starts with / (like /dev/null)
+            if not filename.startswith('/') and '/' in filename:
+                filename = filename.split('/', 1)[1]
+            return (cmd, filename)
+        return (cmd, None)
+    
+    elif line.startswith('@@'):
+        # Extract content between @@ markers
+        # Format is typically: @@ -start,count +start,count @@ optional context
+        # We want to extract everything between the first and second @@
+        if '@@' in line[2:]:
+            end_pos = line.index('@@', 2)
+            content = line[2:end_pos].strip()
+            return ('@@', content)
+        return ('@@', line[2:].strip())
+    
+    return (None, None)
+
+
 def extract_hunks(patch: list[str]) -> list[Hunk]:
     # Go through the unified diff lines and fix the hunk headers
     # For each hunk header line starting with @@, count the number of added, removed, and unchanged lines
     # The hunk header format is @@ -start,count +start,count @@
     # The hunk ends with another @@, ---, +++, or end of file
     # The header may have incorrect line counts, so we need to recalculate them
+    
+    def save_current_hunk(last_index: int):
+        """Helper to save any pending hunk to the list."""
+        nonlocal current_hunk_start
+        if current_hunk_start is not None:
+            h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:last_index], current_filename, current_mode)
+            hunks.append(h)
+            current_hunk_start = None
     
     # Identify all hunks and add them to the list
     hunks = []
@@ -192,69 +240,89 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
     current_mode = ApplicationMode.MODIFY
     
     for i, line in enumerate(patch):
-        # When we see ---, we're starting a new file section
-        # Reset state and prepare to determine file operation type
-        if line.startswith('---'):
-            # First, save any pending hunk
-            if current_hunk_start is not None:
-                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename, current_mode)
-                hunks.append(h)
-                current_hunk_start = None
-            
-            # Reset state for new file section
-            current_mode = ApplicationMode.MODIFY
-            current_filename = None
-            
-            # Detect file creation: --- /dev/null or --- a/dev/null
-            parts = line.split(None, 1)
-            if len(parts) > 1:
-                if '/dev/null' in parts[1]:
-                    current_mode = ApplicationMode.CREATE
-                else:
-                    # Extract filename from --- line (for normal edits and deletions)
-                    filename = parts[1]
-                    if filename.startswith('a/'):
-                        filename = filename[2:]
-                    if '/dev/null' not in filename:
-                        current_filename = filename
+        cmd, arg = parse_patch_cmd(line)
         
+        # When we see ---, we're starting a new file section
+        if cmd == '---':
+            save_current_hunk(i)
+                    
+            # Detect file creation: --- /dev/null
+            if arg == '/dev/null':
+                current_mode = ApplicationMode.CREATE
+                current_filename = None
+            else:
+                # Else extract filename from --- line (for normal edits and deletions)
+                current_mode = ApplicationMode.MODIFY # Default to MODIFY, may change on +++ line
+                current_filename = arg
         # Detect file deletion or get filename for normal edits
-        elif line.startswith('+++'):
-            # Save any pending hunk (shouldn't normally happen here)
-            if current_hunk_start is not None:
-                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename, current_mode)
-                hunks.append(h)
-                current_hunk_start = None
-            
-            parts = line.split(None, 1)
-            if len(parts) > 1:
-                if '/dev/null' in parts[1]:
-                    # This is a file deletion
-                    current_mode = ApplicationMode.DELETE
-                    # Filename should already be set from --- line
-                else:
-                    # Normal file or new file
-                    filename = parts[1]
-                    if filename.startswith('b/'):
-                        filename = filename[2:]
-                    if '/dev/null' not in filename:
-                        current_filename = filename
+        elif cmd == '+++':
+            # Check for file deletion
+            if arg == '/dev/null':
+                current_mode = ApplicationMode.DELETE
+            elif current_mode == ApplicationMode.CREATE:
+                # Filename for CREATE op
+                current_filename = arg
         
         # When we see @@, start recording a new hunk
-        elif line.startswith('@@'):
-            # Save any pending hunk first
-            if current_hunk_start is not None:
-                h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename, current_mode)
-                hunks.append(h)
-            
+        elif cmd == '@@':
+            save_current_hunk(i)
             current_hunk_start = i
 
     # Don't forget the last hunk
-    if current_hunk_start is not None:
-        h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:], current_filename, current_mode)
-        hunks.append(h)
+    save_current_hunk(len(patch))
 
     return hunks
+
+def apply_hunks_to_code(code_lines: list[str], hunks: list[Hunk], fuzziness: int) -> int:
+    """
+    Match and apply hunks to code lines.
+    
+    Args:
+        code_lines: List of code lines to modify (modified in place)
+        hunks: List of hunks to apply
+        fuzziness: Level of fuzzy matching (0=exact, 1=ignore whitespace, 2=allow small differences)
+    
+    Returns:
+        Number of hunks that failed to apply
+    """
+    application_list = []
+    failed_hunks = 0
+    
+    for hunk in hunks:
+        if hunk.empty():
+            print("[SKIP] Useless hunk")
+            continue
+        
+        # For file creation, apply at position 0 without matching
+        if hunk.application_mode == ApplicationMode.CREATE:
+            application_list.append((0, hunk))
+            continue
+        
+        hunk_start = None
+        for fuzziness_level in range(fuzziness + 1):
+            hunk_start = hunk.match_code(code_lines, fuzziness_level)
+            if hunk_start is not None:
+                if fuzziness_level > 0:
+                    print(f"[WARNING] Hunk {hunk} applied with fuzziness {fuzziness_level}")
+                break
+        
+        if hunk_start is None:
+            print(f"[FAIL] Can't apply hunk {hunk}")
+            failed_hunks += 1
+        else:
+            application_list.append((hunk_start, hunk))
+    
+    # Sort application_list by start position
+    application_list.sort(key=lambda x: x[0])
+    
+    # Apply hunks
+    source_offset = 0
+    for hunk_start, hunk in application_list:
+        start = hunk_start + source_offset
+        code_lines[start:start + hunk.match_count()] = hunk.replace
+        source_offset += hunk.replace_count() - hunk.match_count()
+    
+    return failed_hunks
 
 def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0) -> bool:
     """
@@ -339,43 +407,8 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
                 all_success = False
                 continue
         
-        # Build application list for this file
-        application_list = []
-        failed_hunks = 0
-        
-        for hunk in file_hunks:
-            if hunk.empty():
-                print("[SKIP] Useless hunk")
-                continue
-            
-            # For file creation, apply at position 0 without matching
-            if hunk.application_mode == ApplicationMode.CREATE:
-                application_list.append((0, hunk))
-                continue
-            
-            hunk_start = None
-            for fuzziness_level in range(fuzziness + 1):
-                hunk_start = hunk.match_code(code_lines, fuzziness_level)
-                if hunk_start is not None:
-                    if fuzziness_level > 0:
-                        print(f"[WARNING] Hunk {hunk} applied with fuzziness {fuzziness_level}")
-                    break
-            
-            if hunk_start is None:
-                print(f"[FAIL] Can't apply hunk {hunk}")
-                failed_hunks += 1
-            else:
-                application_list.append((hunk_start, hunk))
-        
-        # Sort application_list by start position
-        application_list.sort(key=lambda x: x[0])
-        
-        # Apply hunks
-        source_offset = 0
-        for hunk_start, hunk in application_list:
-            start = hunk_start + source_offset
-            code_lines[start:start + hunk.match_count()] = hunk.replace
-            source_offset += hunk.replace_count() - hunk.match_count()
+        # Apply hunks to code lines
+        failed_hunks = apply_hunks_to_code(code_lines, file_hunks, fuzziness)
         
         # Report results for this file
         if failed_hunks > 0:
@@ -403,38 +436,9 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
 
 def patch_code(code_lines: list[str], patch_lines: list[str], fuzziness: int = 0):
     hunk_list = extract_hunks(patch_lines)
-    failed_hunks = 0
     print(f"Extracted {len(hunk_list)} hunks:")
-    # identify all hunks to apply
-    application_list = []
-    for hunk in hunk_list:
-        if hunk.empty():
-            print("[SKIP] Useless hunk")
-            continue
-        # print("Hunk", hunk)
-        hunk_start = None
-        for fuzziness_level in range(fuzziness + 1):
-            hunk_start = hunk.match_code(code_lines, fuzziness)
-            if hunk_start:
-                if fuzziness_level > 0:
-                    print(f"[WARNING] Hunk {hunk} applied with fuzziness {fuzziness_level}")
-                break
-        if hunk_start is None:
-            print(f"[FAIL] Can't apply hunk {hunk}")
-            failed_hunks += 1
-        else:
-            # print("[OK] Applying hunk at", hunk_start)
-            application_list.append((hunk_start, hunk))
-        
-    # Sort application_list by start
-    application_list.sort(key=lambda x: x[0])
-
-    source_offset = 0
-    for hunk_start, hunk in application_list:
-        # print(f"Replacing lines {start_index} to {start_index + hunk.source_length} with {len(new_lines)} new lines.")
-        start = hunk_start + source_offset
-        code_lines[start:start + hunk.match_count()] = hunk.replace
-        source_offset += hunk.replace_count() - hunk.match_count()
+    
+    failed_hunks = apply_hunks_to_code(code_lines, hunk_list, fuzziness)
     
     if failed_hunks > 0:
         print(f"Patch application failed. {failed_hunks}/{len(hunk_list)} hunks failed to apply.")
