@@ -643,6 +643,160 @@ class TestPatchProject:
         
         assert len(hunks) == 1
         assert hunks[0].filename == "test.py"
+    
+    def test_create_new_file(self):
+        """Test creating a new file from patch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            
+            # Patch to create a new file
+            patch_lines = [
+                "--- /dev/null",
+                "+++ b/newfile.py",
+                "@@ -0,0 +1,3 @@",
+                "+def hello():",
+                "+    print('Hello')",
+                "+    return 42"
+            ]
+            
+            result = patch_project(project_dir, patch_lines, fuzziness=0)
+            
+            assert result == True
+            new_file = project_dir / "newfile.py"
+            assert new_file.exists()
+            content = new_file.read_text()
+            assert "def hello():" in content
+            assert "print('Hello')" in content
+            assert "return 42" in content
+    
+    def test_create_multiple_new_files(self):
+        """Test creating multiple new files in one patch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            
+            patch_lines = [
+                "--- /dev/null",
+                "+++ b/file1.py",
+                "@@ -0,0 +1,2 @@",
+                "+# File 1",
+                "+x = 1",
+                "--- /dev/null",
+                "+++ b/file2.py",
+                "@@ -0,0 +1,2 @@",
+                "+# File 2",
+                "+y = 2"
+            ]
+            
+            result = patch_project(project_dir, patch_lines, fuzziness=0)
+            
+            assert result == True
+            file1 = project_dir / "file1.py"
+            file2 = project_dir / "file2.py"
+            assert file1.exists()
+            assert file2.exists()
+            assert "x = 1" in file1.read_text()
+            assert "y = 2" in file2.read_text()
+    
+    def test_create_file_in_nested_directory(self):
+        """Test creating a new file in non-existent nested directories."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            
+            patch_lines = [
+                "--- /dev/null",
+                "+++ b/src/utils/helper.py",
+                "@@ -0,0 +1,2 @@",
+                "+def helper():",
+                "+    pass"
+            ]
+            
+            result = patch_project(project_dir, patch_lines, fuzziness=0)
+            
+            assert result == True
+            new_file = project_dir / "src" / "utils" / "helper.py"
+            assert new_file.exists()
+            assert "def helper():" in new_file.read_text()
+    
+    def test_mixed_create_and_modify(self):
+        """Test patch that both creates new files and modifies existing ones."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            
+            # Create an existing file
+            existing_file = project_dir / "existing.py"
+            existing_file.write_text("old_line\n")
+            
+            patch_lines = [
+                "--- a/existing.py",
+                "+++ b/existing.py",
+                "@@ -1,1 +1,1 @@",
+                "-old_line",
+                "+new_line",
+                "--- /dev/null",
+                "+++ b/newfile.py",
+                "@@ -0,0 +1,1 @@",
+                "+fresh_content"
+            ]
+            
+            result = patch_project(project_dir, patch_lines, fuzziness=0)
+            
+            assert result == True
+            # Existing file should be modified
+            assert "new_line" in existing_file.read_text()
+            assert "old_line" not in existing_file.read_text()
+            # New file should be created
+            new_file = project_dir / "newfile.py"
+            assert new_file.exists()
+            assert "fresh_content" in new_file.read_text()
+    
+    def test_new_file_flag_detection(self):
+        """Test that is_new_file flag is correctly set when parsing patches."""
+        patch_lines = [
+            "--- /dev/null",
+            "+++ b/newfile.py",
+            "@@ -0,0 +1,2 @@",
+            "+line1",
+            "+line2"
+        ]
+        
+        hunks = extract_hunks(patch_lines)
+        
+        assert len(hunks) == 1
+        assert hunks[0].is_new_file == True
+        assert hunks[0].filename == "newfile.py"
+    
+    def test_existing_file_flag_not_set(self):
+        """Test that is_new_file flag is False for regular patches."""
+        patch_lines = [
+            "--- a/existing.py",
+            "+++ b/existing.py",
+            "@@ -1,1 +1,1 @@",
+            "-old",
+            "+new"
+        ]
+        
+        hunks = extract_hunks(patch_lines)
+        
+        assert len(hunks) == 1
+        assert hunks[0].is_new_file == False
+    
+    def test_create_empty_file(self):
+        """Test creating an empty file (edge case)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            
+            patch_lines = [
+                "--- /dev/null",
+                "+++ b/empty.txt",
+                "@@ -0,0 +1,0 @@"
+            ]
+            
+            result = patch_project(project_dir, patch_lines, fuzziness=0)
+            
+            # Should create the file even if empty
+            assert result == True
+            empty_file = project_dir / "empty.txt"
+            assert empty_file.exists()
 
 
 if __name__ == "__main__":

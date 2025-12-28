@@ -38,6 +38,7 @@ class Hunk:
             self.start_new = 0
         
         self.filename = filename
+        self.is_new_file = False  # Flag for file creation
         self.match = []
         self.replace = []
 
@@ -96,6 +97,9 @@ class Hunk:
                 self.replace = self.replace[:-trim_amount]
 
     def empty(self) -> bool:
+        # A hunk is not empty if it's for a new file with content to add
+        if self.is_new_file and self.replace_count() > 0:
+            return False
         return self.match_count() == 0 
 
     def match_count(self) -> int:
@@ -175,8 +179,17 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
     hunks = []
     current_hunk_start = None
     current_filename = None
+    is_new_file = False
     
     for i, line in enumerate(patch):
+        # Detect file creation: --- /dev/null or --- a/dev/null
+        if line.startswith('---'):
+            parts = line.split(None, 1)
+            if len(parts) > 1 and '/dev/null' in parts[1]:
+                is_new_file = True
+            else:
+                is_new_file = False
+        
         # Extract filename from +++ line (unified diff format)
         if line.startswith('+++'):
             # Format: +++ b/path/to/file or +++ path/to/file
@@ -186,11 +199,15 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
                 # Remove 'b/' prefix if present
                 if filename.startswith('b/'):
                     filename = filename[2:]
-                current_filename = filename
+                # Skip /dev/null as filename
+                if '/dev/null' not in filename:
+                    current_filename = filename
         
         if line.startswith('@@') or line.startswith('+++') or line.startswith('---'):
             if current_hunk_start is not None:
                 h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:i], current_filename)
+                if is_new_file:
+                    h.is_new_file = True
                 hunks.append(h)
             current_hunk_start = None
 
@@ -198,7 +215,10 @@ def extract_hunks(patch: list[str]) -> list[Hunk]:
             current_hunk_start = i
 
     if current_hunk_start is not None:
-        hunks.append(Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:], current_filename))
+        h = Hunk(patch[current_hunk_start], patch[current_hunk_start + 1:], current_filename)
+        if is_new_file:
+            h.is_new_file = True
+        hunks.append(h)
 
     return hunks
 
@@ -248,18 +268,28 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
         
         # Check if file exists
         if not file_path.exists():
-            print(f"[ERROR] File {file_path} does not exist")
-            all_success = False
-            continue
-        
-        # Load file content
-        try:
-            with open(file_path, 'r') as f:
-                code_lines = f.read().splitlines()
-        except Exception as e:
-            print(f"[ERROR] Failed to read {file_path}: {e}")
-            all_success = False
-            continue
+            # Check if this is a file creation patch
+            is_file_creation = any(hunk.is_new_file or hunk.match_count() == 0 for hunk in file_hunks)
+            
+            if is_file_creation:
+                print(f"[CREATE] Creating new file {file_path}")
+                # Ensure parent directory exists
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                # Start with empty file content
+                code_lines = []
+            else:
+                print(f"[ERROR] File {file_path} does not exist")
+                all_success = False
+                continue
+        else:
+            # Load file content
+            try:
+                with open(file_path, 'r') as f:
+                    code_lines = f.read().splitlines()
+            except Exception as e:
+                print(f"[ERROR] Failed to read {file_path}: {e}")
+                all_success = False
+                continue
         
         # Build application list for this file
         application_list = []
@@ -268,6 +298,11 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
         for hunk in file_hunks:
             if hunk.empty():
                 print("[SKIP] Useless hunk")
+                continue
+            
+            # For file creation, apply at position 0 without matching
+            if hunk.is_new_file or (hunk.match_count() == 0 and not code_lines):
+                application_list.append((0, hunk))
                 continue
             
             hunk_start = None
