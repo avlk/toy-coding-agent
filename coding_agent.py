@@ -423,14 +423,26 @@ def execute(config: dict, context: Context):
     sandbox_method = config.get("sandbox_method", "auto")
     commandline_args = config.get("commandline_args", "")
 
-    venv_path = None
-    python_packages = None
+    # Create project directory structure
+    project_path = f"solutions/{context.filename}"
+    os.makedirs(project_path, exist_ok=True)
+    
+    # Write code to file
+    code_file = os.path.join(project_path, "code.py")
+    with open(code_file, 'w') as f:
+        f.write(to_string(context.current.code))
+    
+    # Write requirements.txt if packages specified
     if config.get("python_packages"):
-        venv_path = f"solutions/venv/{context.filename}"
-        python_packages = config.get("python_packages")
-
+        req_file = os.path.join(project_path, "requirements.txt")
+        with open(req_file, 'w') as f:
+            f.write('\n'.join(config["python_packages"]))
+    
+    # Build command arguments: entry point + args
+    cmd_args = f"code.py {commandline_args}".strip() if commandline_args else "code.py"
+    
     print(f"🖥️  Executing code locally (sandbox: {sandbox_method}, args: {commandline_args if commandline_args else 'none'})...")
-    local_exec_result = execute_sandboxed(to_string(context.current.code), method=sandbox_method, args=commandline_args, venv_path=venv_path, extra_packages=python_packages)
+    local_exec_result = execute_sandboxed(project_path, cmd_args, method=sandbox_method)
     local_exec_success = local_exec_result['success']
 
     if local_exec_success:
