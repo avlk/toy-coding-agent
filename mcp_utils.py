@@ -162,15 +162,17 @@ class ProjectFolder:
             End line index (0-based, inclusive)
         """
         end_idx = start_idx
+        last_code_idx = start_idx  # Track last line with actual code
         
         # Skip the definition line itself
         for i in range(start_idx + 1, len(lines)):
             line = lines[i]
             
-            # Skip empty lines and comments
+            # Check if it's empty or comment
             stripped = line.strip()
             if not stripped or stripped.startswith('#'):
-                end_idx = i
+                # Don't update end_idx for trailing empty/comment lines
+                # Only update if we've seen code at proper indentation
                 continue
             
             # Check indentation
@@ -180,7 +182,9 @@ class ProjectFolder:
             if indent <= start_indent:
                 break
             
+            # This is a code line with proper indentation
             end_idx = i
+            last_code_idx = i
         
         return end_idx
     
@@ -315,13 +319,14 @@ class ProjectFolder:
         except Exception as e:
             return self._error_response(f"Failed to load file: {str(e)}")
     
-    def create_file(self, file_path: str, content: str) -> Dict[str, Any]:
+    def create_file(self, file_path: str, content: str, overwrite: bool = False) -> Dict[str, Any]:
         """
         Create a new file with the given content.
         
         Args:
             file_path: Path to the file (relative to project folder or absolute)
             content: Content to write to the file
+            overwrite: If True, overwrite existing file. If False, fail if file exists. Default: False
             
         Returns:
             Dictionary with:
@@ -331,6 +336,10 @@ class ProjectFolder:
         """
         try:
             full_path = self._validate_path(file_path)
+            
+            # Check if file already exists
+            if full_path.exists() and not overwrite:
+                return self._error_response(f"File already exists: {file_path}. Use overwrite=True to replace it.")
             
             # Create parent directories if needed
             full_path.parent.mkdir(parents=True, exist_ok=True)
