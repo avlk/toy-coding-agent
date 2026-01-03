@@ -23,18 +23,21 @@ Date: December 28, 2025
 from fastmcp import FastMCP
 from mcp_utils import ProjectFolder
 from patch import patch_project
+from sandbox_execution import execute_sandboxed
 from pathlib import Path
 from typing import Optional
 import json
 
 
-def create_file_ops_server(project_path: str, server_name: str = "file-operations") -> FastMCP:
+def create_file_ops_server(project_path: str, server_name: str = "file-operations", sandbox_method: str = "auto") -> FastMCP:
     """
     Create a FastMCP server with file operation tools.
     
     Args:
         project_path: Path to the project folder to work with
         server_name: Name of the MCP server (default: "file-operations")
+        sandbox_method: Sandbox method for execute_project (default: "auto")
+                       Options: 'auto', 'firejail', 'docker', 'bubblewrap', 'subprocess'
     
     Returns:
         FastMCP server instance ready to run
@@ -239,6 +242,45 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                 "message": "Exception occurred during patch application"
             }
             return json.dumps(error_result, indent=2)
+    
+    # Expose execute_sandboxed as MCP tool
+    @mcp.tool()
+    def execute_project(cmd_args: str, timeout: int = 30) -> str:
+        """
+        Execute a Python project with sandboxing.
+        
+        The project folder is the current project folder configured for this server.
+        A virtual environment (.venv) will be automatically created if it doesn't exist,
+        and any requirements.txt file will be automatically installed.
+        
+        Args:
+            cmd_args: Command with entry point and arguments
+                     Example: "main.py --verbose arg1 arg2"
+                     Example: "script.py"
+            timeout: Execution timeout in seconds (default: 30)
+        
+        Returns:
+            JSON string with:
+            - success: True if execution succeeded (exit code 0)
+            - stdout: Standard output from the execution
+            - stderr: Standard error from the execution
+            - exit_code: Process exit code
+        
+        Project structure expected:
+            project/
+            ├── main.py           # or other entry point
+            ├── module1.py        # additional modules
+            ├── .venv/            # auto-created if doesn't exist
+            └── requirements.txt  # optional, auto-installed if present
+        """
+        project_path = str(pf.project_path)
+        result = execute_sandboxed(
+            project=project_path,
+            cmd_args=cmd_args,
+            timeout=timeout,
+            method=sandbox_method
+        )
+        return json.dumps(result, indent=2)
     
     # Add a resource to expose project info
     @mcp.resource("project://info")
