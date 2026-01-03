@@ -23,10 +23,11 @@ import os
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple, Any
+from fastmcp.exceptions import ToolError
 
 
-class ProjectFolderError(Exception):
-    """Custom exception for project folder operations."""
+class ProjectFolderError(ToolError):
+    """Custom exception for project folder operations. Inherits from ToolError for MCP integration."""
     pass
 
 
@@ -185,12 +186,6 @@ class ProjectFolder:
         
         return end_idx
     
-    def _error_response(self, error: str, **kwargs) -> Dict[str, Any]:
-        return {'success': False, 'error': error, **kwargs}
-    
-    def _success_response(self, **kwargs) -> Dict[str, Any]:
-        return {'success': True, **kwargs}
-    
     def get_metadata(self, file_path: Union[str, Path]) -> Dict[str, Any]:
         """
         Get metadata for a file.
@@ -246,7 +241,7 @@ class ProjectFolder:
         except Exception: # File not in project folder or other error
             pass
 
-    def list_files(self, pattern: str = "*") -> Dict[str, Any]:
+    def list_files(self, pattern: str = "*") -> List[Dict[str, Any]]:
         """
         List all files in the project folder recursively.
         
@@ -254,11 +249,10 @@ class ProjectFolder:
             pattern: Glob pattern for filtering files (default: "*" for all files)
             
         Returns:
-            Dictionary with:
-                - success: True if operation succeeded
-                - files: List of file metadata dictionaries
-                - count: Total number of files
-                - error: Error message if failed
+            List of file metadata dictionaries
+            
+        Raises:
+            ProjectFolderError: If operation fails
         """
         try:
             files = []
@@ -271,10 +265,10 @@ class ProjectFolder:
             # Sort by path for consistent output
             files.sort(key=lambda x: x['path'])
             
-            return self._success_response(files=files, count=len(files))
+            return files
         
         except Exception as e:
-            return self._error_response(f"Failed to list files: {str(e)}")
+            raise ProjectFolderError(f"Failed to list files: {str(e)}")
     
     def load_file(self, file_path: str) -> Dict[str, Any]:
         """
@@ -285,19 +279,20 @@ class ProjectFolder:
             
         Returns:
             Dictionary with:
-                - success: True if operation succeeded
                 - content: File contents as string
                 - metadata: File metadata
-                - error: Error message if failed
+                
+        Raises:
+            ProjectFolderError: If file not found, not a text file, or operation fails
         """
         try:
             full_path = self._validate_path(file_path)
             
             if not full_path.exists():
-                return self._error_response(f"File not found: {file_path}")
+                raise ProjectFolderError(f"File not found: {file_path}")
             
             if not full_path.is_file():
-                return self._error_response(f"Path is not a file: {file_path}")
+                raise ProjectFolderError(f"Path is not a file: {file_path}")
             
             # Try to read as text
             with open(full_path, 'r', encoding='utf-8') as f:
@@ -305,15 +300,15 @@ class ProjectFolder:
             
             metadata = self.get_metadata(full_path)
             
-            return self._success_response(content=content, metadata=metadata)
+            return {'content': content, 'metadata': metadata}
         except UnicodeDecodeError:
-            return self._error_response(f"File is not a text file: {file_path}")
-        except ProjectFolderError as e:
-            return self._error_response(str(e))
+            raise ProjectFolderError(f"File is not a text file: {file_path}")
+        except ProjectFolderError:
+            raise
         except PermissionError:
-            return self._error_response(f"Permission denied: {file_path}")
+            raise ProjectFolderError(f"Permission denied: {file_path}")
         except Exception as e:
-            return self._error_response(f"Failed to load file: {str(e)}")
+            raise ProjectFolderError(f"Failed to load file: {str(e)}")
     
     def create_file(self, file_path: str, content: str, overwrite: bool = False) -> Dict[str, Any]:
         """
@@ -325,17 +320,17 @@ class ProjectFolder:
             overwrite: If True, overwrite existing file. If False, fail if file exists. Default: False
             
         Returns:
-            Dictionary with:
-                - success: True if operation succeeded
-                - metadata: File metadata
-                - error: Error message if failed
+            Dictionary with file metadata
+            
+        Raises:
+            ProjectFolderError: If file exists and overwrite=False, or operation fails
         """
         try:
             full_path = self._validate_path(file_path)
             
             # Check if file already exists
             if full_path.exists() and not overwrite:
-                return self._error_response(f"File already exists: {file_path}. Use overwrite=True to replace it.")
+                raise ProjectFolderError(f"File already exists: {file_path}. Use overwrite=True to replace it.")
             
             # Create parent directories if needed
             full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -347,18 +342,16 @@ class ProjectFolder:
             # Clear cache for this file
             self._clear_metadata_cache(full_path)
             
-            metadata = self.get_metadata(full_path)
-            
-            return self._success_response(metadata=metadata)
+            return self.get_metadata(full_path)
         
-        except ProjectFolderError as e:
-            return self._error_response(str(e))
+        except ProjectFolderError:
+            raise
         except PermissionError:
-            return self._error_response(f"Permission denied: {file_path}")
+            raise ProjectFolderError(f"Permission denied: {file_path}")
         except Exception as e:
-            return self._error_response(f"Failed to create file: {str(e)}")
+            raise ProjectFolderError(f"Failed to create file: {str(e)}")
     
-    def remove_file(self, file_path: str) -> Dict[str, Any]:
+    def remove_file(self, file_path: str) -> str:
         """
         Remove a file from the project folder.
         
@@ -366,19 +359,19 @@ class ProjectFolder:
             file_path: Path to the file (relative to project folder or absolute)
             
         Returns:
-            Dictionary with:
-                - success: True if operation succeeded
-                - path: Path of the removed file
-                - error: Error message if failed
+            Relative path of the removed file
+            
+        Raises:
+            ProjectFolderError: If file not found, path is not a file, or operation fails
         """
         try:
             full_path = self._validate_path(file_path)
             
             if not full_path.exists():
-                return self._error_response(f"File not found: {file_path}")
+                raise ProjectFolderError(f"File not found: {file_path}")
             
             if not full_path.is_file():
-                return self._error_response(f"Path is not a file: {file_path}")
+                raise ProjectFolderError(f"Path is not a file: {file_path}")
             
             # Get relative path before deletion
             rel_path = str(full_path.relative_to(self.project_path))
@@ -389,14 +382,14 @@ class ProjectFolder:
             # Delete the file
             full_path.unlink()
             
-            return self._success_response(path=rel_path)
+            return rel_path
         
-        except ProjectFolderError as e:
-            return self._error_response(str(e))
+        except ProjectFolderError:
+            raise
         except PermissionError:
-            return self._error_response(f"Permission denied: {file_path}")
+            raise ProjectFolderError(f"Permission denied: {file_path}")
         except Exception as e:
-            return self._error_response(f"Failed to remove file: {str(e)}")
+            raise ProjectFolderError(f"Failed to remove file: {str(e)}")
     
     def get_line_range(self, file_path: str, start_line: int, end_line: int) -> Dict[str, Any]:
         """
@@ -409,27 +402,28 @@ class ProjectFolder:
             
         Returns:
             Dictionary with:
-                - success: True if operation succeeded
                 - lines: List of lines in the range
                 - start_line: Starting line number
-                - end_line: Ending line number
-                - path: File path
-                - error: Error message if failed
+                - end_line: Ending line number (adjusted if needed)
+                - path: Relative file path
+                
+        Raises:
+            ProjectFolderError: If file not found, invalid line numbers, or operation fails
         """
         try:
             full_path = self._validate_path(file_path)
             
             if not full_path.exists():
-                return self._error_response(f"File not found: {file_path}")
+                raise ProjectFolderError(f"File not found: {file_path}")
             
             if not full_path.is_file():
-                return self._error_response(f"Path is not a file: {file_path}")
+                raise ProjectFolderError(f"Path is not a file: {file_path}")
             
             if start_line < 1:
-                return self._error_response("start_line must be >= 1")
+                raise ProjectFolderError("start_line must be >= 1")
             
             if end_line < start_line:
-                return self._error_response("end_line must be >= start_line")
+                raise ProjectFolderError("end_line must be >= start_line")
             
             # Read file lines
             with open(full_path, 'r', encoding='utf-8') as f:
@@ -438,9 +432,7 @@ class ProjectFolder:
             # Validate line numbers
             total_lines = len(all_lines)
             if start_line > total_lines:
-                return self._error_response(
-                    f"start_line {start_line} exceeds file length {total_lines}"
-                )
+                raise ProjectFolderError(f"start_line {start_line} exceeds file length {total_lines}")
             
             # Adjust end_line if it exceeds file length
             actual_end = min(end_line, total_lines)
@@ -450,20 +442,20 @@ class ProjectFolder:
             
             rel_path = str(full_path.relative_to(self.project_path))
             
-            return self._success_response(
-                lines=lines,
-                start_line=start_line,
-                end_line=actual_end,
-                path=rel_path
-            )
+            return {
+                'lines': lines,
+                'start_line': start_line,
+                'end_line': actual_end,
+                'path': rel_path
+            }
         except UnicodeDecodeError:
-            return self._error_response(f"File is not a text file: {file_path}")
-        except ProjectFolderError as e:
-            return self._error_response(str(e))
+            raise ProjectFolderError(f"File is not a text file: {file_path}")
+        except ProjectFolderError:
+            raise
         except PermissionError:
-            return self._error_response(f"Permission denied: {file_path}")
+            raise ProjectFolderError(f"Permission denied: {file_path}")
         except Exception as e:
-            return self._error_response(f"Failed to get line range: {str(e)}")
+            raise ProjectFolderError(f"Failed to get line range: {str(e)}")
     
     def search_files(
         self, 
@@ -471,7 +463,7 @@ class ProjectFolder:
         is_regex: bool = False, 
         case_sensitive: bool = True,
         file_pattern: str = "*"
-    ) -> Dict[str, Any]:
+    ) -> List[Dict[str, Any]]:
         """
         Search for a string or regex pattern across all files.
         
@@ -482,14 +474,13 @@ class ProjectFolder:
             file_pattern: Glob pattern for filtering which files to search
             
         Returns:
-            Dictionary with:
-                - success: True if operation succeeded
-                - matches: List of match dictionaries with:
-                    - file: Relative file path
-                    - line_number: Line number (1-indexed)
-                    - line: Content of the matching line
-                - count: Total number of matches
-                - error: Error message if failed
+            List of match dictionaries with:
+                - file: Relative file path
+                - line_number: Line number (1-indexed)
+                - line: Content of the matching line
+                
+        Raises:
+            ProjectFolderError: If regex is invalid or search fails
         """
         try:
             matches = []
@@ -500,7 +491,7 @@ class ProjectFolder:
                     flags = 0 if case_sensitive else re.IGNORECASE
                     regex = re.compile(pattern, flags)
                 except re.error as e:
-                    return self._error_response(f"Invalid regex pattern: {str(e)}")
+                    raise ProjectFolderError(f"Invalid regex pattern: {str(e)}")
             
             # Search through files
             for file_path in self.project_path.rglob(file_pattern):
@@ -534,16 +525,18 @@ class ProjectFolder:
                     # Skip files we can't read or decode
                     continue
             
-            return self._success_response(matches=matches, count=len(matches))
+            return matches
         
+        except ProjectFolderError:
+            raise
         except Exception as e:
-            return self._error_response(f"Search failed: {str(e)}")
+            raise ProjectFolderError(f"Search failed: {str(e)}")
     
     def find_python_definition(
         self, 
         name: str, 
         def_type: Optional[str] = None
-    ) -> Dict[str, Any]:
+    ) -> List[Dict[str, Any]]:
         """
         Find Python class or method/function definitions by name.
         
@@ -552,16 +545,15 @@ class ProjectFolder:
             def_type: Type of definition to find ('class', 'def', or None for both)
             
         Returns:
-            Dictionary with:
-                - success: True if operation succeeded
-                - definitions: List of definition dictionaries with:
-                    - name: Name of the definition
-                    - file: Relative file path
-                    - start_line: Starting line number (1-indexed)
-                    - end_line: Ending line number (1-indexed)
-                    - text: Full text of the definition
-                - count: Total number of definitions found
-                - error: Error message if failed
+            List of definition dictionaries with:
+                - name: Name of the definition
+                - file: Relative file path
+                - start_line: Starting line number (1-indexed)
+                - end_line: Ending line number (1-indexed)
+                - text: Full text of the definition
+                
+        Raises:
+            ProjectFolderError: If operation fails
         """
         try:
             definitions = []
@@ -616,8 +608,8 @@ class ProjectFolder:
                     # Skip files we can't read
                     continue
             
-            return self._success_response(definitions=definitions, count=len(definitions))
+            return definitions
         
         except Exception as e:
-            return self._error_response(f"Find definition failed: {str(e)}")
+            raise ProjectFolderError(f"Find definition failed: {str(e)}")
 

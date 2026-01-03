@@ -21,7 +21,8 @@ Date: December 28, 2025
 """
 
 from fastmcp import FastMCP
-from mcp_utils import ProjectFolder
+from fastmcp.exceptions import ToolError
+from mcp_utils import ProjectFolder, ProjectFolderError
 from patch import patch_project
 from sandbox_execution import execute_sandboxed
 from pathlib import Path
@@ -50,7 +51,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
     
     # Expose list_files as MCP tool
     @mcp.tool()
-    def list_files(pattern: str = "*") -> dict:
+    def list_files(pattern: str = "*") -> list:
         """
         List all files in the project folder recursively.
         
@@ -59,7 +60,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                     Examples: "*.py" for Python files, "test_*.py" for test files
         
         Returns:
-            Dictionary with files list, each containing path, size in bytes and lines
+            List of file metadata dictionaries (path, size_bytes, size_lines, mtime)
         """
         return pf.list_files(pattern=pattern)
     
@@ -92,13 +93,13 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             overwrite: If True, overwrite existing file. If False, fail if file exists (default: False)
         
         Returns:
-            Dictionary with success status and file metadata, or error if file exists
+            Dictionary with file metadata (path, size_bytes, size_lines, mtime)
         """
         return pf.create_file(file_path, content, overwrite=overwrite)
     
     # Expose remove_file as MCP tool
     @mcp.tool()
-    def remove_file(file_path: str) -> dict:
+    def remove_file(file_path: str) -> str:
         """
         Remove a file from the project folder.
         
@@ -106,7 +107,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             file_path: Path to the file to remove (relative to project folder)
         
         Returns:
-            Dictionary with success status
+            Path of removed file
         """
         return pf.remove_file(file_path)
     
@@ -133,7 +134,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         is_regex: bool = False,
         case_sensitive: bool = True,
         file_pattern: str = "*"
-    ) -> dict:
+    ) -> list:
         """
         Search for a string or regex pattern across all files in the project.
         
@@ -145,7 +146,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                          Examples: "*.py", "src/**/*.js"
         
         Returns:
-            Dictionary with list of matches containing file, line_number, and line content
+            List of matches containing file, line_number, and line content
         """
         return pf.search_files(
             pattern=pattern,
@@ -156,7 +157,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
     
     # Expose find_python_definition as MCP tool
     @mcp.tool()
-    def find_python_definition(name: str, def_type: Optional[str] = None) -> dict:
+    def find_python_definition(name: str, def_type: Optional[str] = None) -> list:
         """
         Find Python class or function/method definitions by name.
         
@@ -168,7 +169,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                      Use None (default) to find both
         
         Returns:
-            Dictionary with list of definitions containing:
+            List of definitions containing:
             - type: 'class', 'function', or 'method'
             - name: name of the definition
             - file: relative file path
@@ -220,18 +221,19 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             # Apply patch and capture result
             success = patch_project(project_dir, patch_lines, fuzziness=fuzziness)
             
+            if not success:
+                raise ToolError("Patch application failed")
+            
             return {
-                "success": success,
-                "message": "Patch applied successfully" if success else "Patch application failed",
+                "success": True,
+                "message": "Patch applied successfully",
                 "project_path": str(project_dir)
             }
             
+        except ProjectFolderError:
+            raise
         except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Exception occurred during patch application"
-            }
+            raise ToolError(f"Exception occurred during patch application: {str(e)}")
     
     # Expose execute_sandboxed as MCP tool
     @mcp.tool()
@@ -263,12 +265,17 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             ├── .venv/            # auto-created if doesn't exist
             └── requirements.txt  # optional, auto-installed if present
         """
-        return execute_sandboxed(
-            project=str(pf.project_path),
-            cmd_args=cmd_args,
-            timeout=timeout,
-            method=sandbox_method
-        )
+        try:
+            result = execute_sandboxed(
+                project=str(pf.project_path),
+                cmd_args=cmd_args,
+                timeout=timeout,
+                method=sandbox_method
+            )
+            # execute_sandboxed returns dict with success, stdout, stderr, exit_code
+            return result
+        except Exception as e:
+            raise ToolError(f"Execution failed: {str(e)}")
     
     # Add a resource to expose project info
     @mcp.resource("project://info")
