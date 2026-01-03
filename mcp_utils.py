@@ -39,15 +39,21 @@ class ProjectFolder:
     
     Attributes:
         project_path: Absolute path to the project folder
+        exclude_patterns: List of patterns to exclude from file operations
         _metadata_cache: Cache for file metadata with modification times
     """
     
-    def __init__(self, project_path: str):
+    DEFAULT_EXCLUDE_PATTERNS = ['.venv/**/*', '__pycache__/**', '**/*.pyc']
+
+    def __init__(self, project_path: str, exclude_patterns: Optional[List[str]] = None):
         """
         Initialize ProjectFolder with a project directory.
         
         Args:
             project_path: Path to the project folder (relative or absolute)
+            exclude_patterns: List of glob patterns to exclude from file operations
+                            (default: ['.venv/**/*', '__pycache__/**', '**/*.pyc'] to exclude 
+                            virtual environments, cache, and compiled files)
             
         Raises:
             ProjectFolderError: If the project path doesn't exist or isn't a directory
@@ -60,6 +66,7 @@ class ProjectFolder:
         if not self.project_path.is_dir():
             raise ProjectFolderError(f"Project path is not a directory: {project_path}")
         
+        self.exclude_patterns = exclude_patterns if exclude_patterns is not None else self.DEFAULT_EXCLUDE_PATTERNS
         self._metadata_cache = {}
     
     def _validate_path(self, file_path: Union[str, Path]) -> Path:
@@ -94,6 +101,29 @@ class ProjectFolder:
             )
         
         return full_path
+    
+    def _is_excluded(self, file_path: Path) -> bool:
+        """
+        Check if a file path should be excluded based on exclude patterns.
+        
+        Args:
+            file_path: Absolute path to check
+            
+        Returns:
+            True if the path should be excluded, False otherwise
+        """
+        try:
+            rel_path = file_path.relative_to(self.project_path)
+            
+            for pattern in self.exclude_patterns:
+                # Use glob-style matching
+                if rel_path.match(pattern):
+                    return True
+        except ValueError:
+            # Path is not relative to project_path
+            pass
+        
+        return False
     
     def _get_indentation(self, line: str) -> int:
         """
@@ -161,7 +191,7 @@ class ProjectFolder:
     def _success_response(self, **kwargs) -> Dict[str, Any]:
         return {'success': True, **kwargs}
     
-    def _file_metadata(self, file_path: Path) -> Dict[str, Any]:
+    def get_metadata(self, file_path: Union[str, Path]) -> Dict[str, Any]:
         """
         Get metadata for a file.
         
@@ -171,6 +201,10 @@ class ProjectFolder:
         Returns:
             Dictionary with file metadata
         """
+        # Convert to Path and resolve to absolute path
+        if isinstance(file_path, str):
+            file_path = Path(file_path)
+
         try:
             stat_info = os.stat(file_path)
             rel_path = str(file_path.relative_to(self.project_path))
@@ -231,8 +265,8 @@ class ProjectFolder:
             
             # Use rglob for recursive search
             for file_path in self.project_path.rglob(pattern):
-                if file_path.is_file():
-                    files.append(self._file_metadata(file_path))
+                if file_path.is_file() and not self._is_excluded(file_path):
+                    files.append(self.get_metadata(file_path))
             
             # Sort by path for consistent output
             files.sort(key=lambda x: x['path'])
@@ -269,7 +303,7 @@ class ProjectFolder:
             with open(full_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            metadata = self._file_metadata(full_path)
+            metadata = self.get_metadata(full_path)
             
             return self._success_response(content=content, metadata=metadata)
         except UnicodeDecodeError:
@@ -313,7 +347,7 @@ class ProjectFolder:
             # Clear cache for this file
             self._clear_metadata_cache(full_path)
             
-            metadata = self._file_metadata(full_path)
+            metadata = self.get_metadata(full_path)
             
             return self._success_response(metadata=metadata)
         
@@ -470,7 +504,7 @@ class ProjectFolder:
             
             # Search through files
             for file_path in self.project_path.rglob(file_pattern):
-                if not file_path.is_file():
+                if not file_path.is_file() or self._is_excluded(file_path):
                     continue
                 
                 try:
@@ -547,7 +581,7 @@ class ProjectFolder:
             
             # Search through Python files
             for file_path in self.project_path.rglob("*.py"):
-                if not file_path.is_file():
+                if not file_path.is_file() or self._is_excluded(file_path):
                     continue
                 
                 try:

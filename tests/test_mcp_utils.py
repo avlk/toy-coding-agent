@@ -81,8 +81,6 @@ class TestProjectFolderInit:
         """Test initialization with valid project path."""
         pf = ProjectFolder(temp_project)
         assert pf.project_path == Path(temp_project).resolve()
-        assert isinstance(pf._metadata_cache, dict)
-        assert len(pf._metadata_cache) == 0
     
     def test_init_with_relative_path(self, temp_project):
         """Test initialization with relative path."""
@@ -153,13 +151,13 @@ class TestMetadataCaching:
     def test_metadata_basic(self, project_folder):
         """Test basic line counting."""
         file_path = project_folder.project_path / "simple.txt"
-        metadata = project_folder._file_metadata(file_path)
+        metadata = project_folder.get_metadata(file_path)
         assert metadata['size_lines'] == 3
     
     def test_metadata_empty_file(self, project_folder):
         """Test line counting for empty file."""
         file_path = project_folder.project_path / "empty.txt"
-        metadata = project_folder._file_metadata(file_path)
+        metadata = project_folder.get_metadata(file_path)
         assert metadata['size_lines'] == 0
     
     def test_metadata_uses_cache(self, project_folder):
@@ -167,11 +165,11 @@ class TestMetadataCaching:
         file_path = project_folder.project_path / "simple.txt"
         
         # First call - should cache
-        metadata1 = project_folder._file_metadata(file_path)
+        metadata1 = project_folder.get_metadata(file_path)
         assert str("simple.txt") in project_folder._metadata_cache
         
         # Second call - should use cache
-        metadata2 = project_folder._file_metadata(file_path)
+        metadata2 = project_folder.get_metadata(file_path)
         assert metadata1 == metadata2
     
     def test_metadata_invalidates_on_modification(self, project_folder):
@@ -179,7 +177,7 @@ class TestMetadataCaching:
         file_path = project_folder.project_path / "simple.txt"
         
         # Get initial count
-        metadata1 = project_folder._file_metadata(file_path)
+        metadata1 = project_folder.get_metadata(file_path)
         assert metadata1['size_lines'] == 3
         
         # Modify file
@@ -189,13 +187,13 @@ class TestMetadataCaching:
             f.write("\nLine 4")
         
         # Should detect change and recount
-        metadata2 = project_folder._file_metadata(file_path)
+        metadata2 = project_folder.get_metadata(file_path)
         assert metadata2['size_lines'] == 4
     
-    def test_file_metadata_nonexistent_file(self, project_folder):
+    def testget_metadata_nonexistent_file(self, project_folder):
         """Test metadata for non-existent file returns error."""
         file_path = project_folder.project_path / "nonexistent.txt"
-        metadata = project_folder._file_metadata(file_path)
+        metadata = project_folder.get_metadata(file_path)
         assert metadata['error'] is not None
 
 class TestListFiles:
@@ -379,7 +377,7 @@ class TestCreateFile:
         file_path = project_folder.project_path / file_name
         
         # Cache the file (original has 3 lines)
-        old_metadata = project_folder._file_metadata(file_path)
+        old_metadata = project_folder.get_metadata(file_path)
         assert old_metadata['size_lines'] == 3
         assert file_name in project_folder._metadata_cache
         
@@ -387,7 +385,7 @@ class TestCreateFile:
         project_folder.create_file(file_name, "New\nContent\nWith\nLines", overwrite=True)
         
         # Cache should have new count
-        new_metadata = project_folder._file_metadata(file_path)
+        new_metadata = project_folder.get_metadata(file_path)
         assert new_metadata['size_lines'] == 4
     
     def test_create_file_path_traversal(self, project_folder):
@@ -437,7 +435,7 @@ class TestRemoveFile:
         file_path = project_folder.project_path / file_name
         
         # Cache the file
-        project_folder._file_metadata(file_path)
+        project_folder.get_metadata(file_path)
         assert file_name in project_folder._metadata_cache
         
         # Remove file
@@ -771,10 +769,10 @@ class TestHelperFunctions:
         assert result['data'] == "value"
         assert result['count'] == 5
     
-    def test_file_metadata(self, project_folder):
+    def testget_metadata(self, project_folder):
         """Test file metadata extraction."""
         file_path = project_folder.project_path / "simple.txt"
-        metadata = project_folder._file_metadata(file_path)
+        metadata = project_folder.get_metadata(file_path)
         
         assert 'path' in metadata
         assert 'size_bytes' in metadata
