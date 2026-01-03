@@ -22,6 +22,8 @@ Date: December 28, 2025
 
 from fastmcp import FastMCP
 from mcp_utils import ProjectFolder
+from patch import patch_project
+from pathlib import Path
 from typing import Optional
 import json
 
@@ -77,19 +79,21 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
     
     # Expose create_file as MCP tool
     @mcp.tool()
-    def create_file(file_path: str, content: str) -> str:
+    def create_file(file_path: str, content: str, overwrite: bool = False) -> str:
         """
-        Create a new file or overwrite existing file with given content.
+        Create a new file with given content.
+        Fails if file already exists unless overwrite=True.
         Parent directories are created automatically if needed.
         
         Args:
             file_path: Path to the file (relative to project folder)
             content: Content to write to the file
+            overwrite: If True, overwrite existing file. If False, fail if file exists (default: False)
         
         Returns:
-            JSON string with success status and file metadata
+            JSON string with success status and file metadata, or error if file exists
         """
-        result = pf.create_file(file_path, content)
+        result = pf.create_file(file_path, content, overwrite=overwrite)
         return json.dumps(result, indent=2)
     
     # Expose remove_file as MCP tool
@@ -176,6 +180,65 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         """
         result = pf.find_python_definition(name=name, def_type=def_type)
         return json.dumps(result, indent=2)
+    
+    # Expose patch_project as MCP tool
+    @mcp.tool()
+    def apply_patch(patch_content: str, fuzziness: int = 0) -> str:
+        """
+        Apply a unified diff patch to files in the project.
+        
+        This tool can:
+        - Modify existing files
+        - Create new files (when patch shows --- /dev/null)
+        - Delete files (when patch shows +++ /dev/null)
+        
+        The patch must be in unified diff format with file markers (---, +++).
+        Multiple files can be patched in a single operation.
+        
+        Args:
+            patch_content: The unified diff patch as a string
+                          Should include --- and +++ markers for each file
+                          Example:
+                          --- a/file.py
+                          +++ b/file.py
+                          @@ -1,3 +1,3 @@
+                           line 1
+                          -old line 2
+                          +new line 2
+                           line 3
+            fuzziness: Level of fuzzy matching (0-2, default: 0)
+                      0 = exact match required
+                      1 = ignore whitespace and comments
+                      2 = allow small character differences (Levenshtein distance <= 3)
+        
+        Returns:
+            JSON string with:
+            - success: True if all hunks applied successfully
+            - message: Summary of the operation
+            - details: Information about processed files and hunks
+        """
+        try:
+            patch_lines = patch_content.splitlines()
+            project_dir = Path(pf.project_path)
+            
+            # Apply patch and capture result
+            success = patch_project(project_dir, patch_lines, fuzziness=fuzziness)
+            
+            result = {
+                "success": success,
+                "message": "Patch applied successfully" if success else "Patch application failed",
+                "project_path": str(project_dir)
+            }
+            
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            error_result = {
+                "success": False,
+                "error": str(e),
+                "message": "Exception occurred during patch application"
+            }
+            return json.dumps(error_result, indent=2)
     
     # Add a resource to expose project info
     @mcp.resource("project://info")
