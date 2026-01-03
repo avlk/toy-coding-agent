@@ -39,7 +39,7 @@ class ProjectFolder:
     
     Attributes:
         project_path: Absolute path to the project folder
-        _line_count_cache: Cache for file line counts with modification times
+        _metadata_cache: Cache for file metadata with modification times
     """
     
     def __init__(self, project_path: str):
@@ -60,8 +60,7 @@ class ProjectFolder:
         if not self.project_path.is_dir():
             raise ProjectFolderError(f"Project path is not a directory: {project_path}")
         
-        # Cache structure: {absolute_path_str: (mtime, line_count)}
-        self._line_count_cache: Dict[str, Tuple[float, int]] = {}
+        self._metadata_cache = {}
     
     def _validate_path(self, file_path: Union[str, Path]) -> Path:
         """
@@ -96,39 +95,6 @@ class ProjectFolder:
         
         return full_path
     
-    def _get_line_count(self, file_path: Path) -> int:
-        """
-        Get line count for a file, using cache if possible.
-        
-        Args:
-            file_path: Absolute path to the file
-            
-        Returns:
-            Number of lines in the file
-        """
-        try:
-            stat_info = os.stat(file_path)
-            mtime = stat_info.st_mtime
-            path_str = str(file_path)
-            
-            # Check cache
-            if path_str in self._line_count_cache:
-                cached_mtime, cached_count = self._line_count_cache[path_str]
-                if cached_mtime == mtime:
-                    return cached_count
-            
-            # Count lines
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                line_count = sum(1 for _ in f)
-            
-            # Update cache
-            self._line_count_cache[path_str] = (mtime, line_count)
-            
-            return line_count
-        except Exception:
-            # If we can't read the file, return 0
-            return 0
-    
     def _get_indentation(self, line: str) -> int:
         """
         Get the indentation level of a line (number of leading spaces).
@@ -151,7 +117,8 @@ class ProjectFolder:
     
     def _find_def_end(self, lines: List[str], start_idx: int, start_indent: int) -> int:
         """
-        Find the end line of a Python definition block using indentation.
+        Find the end line of a Python definition block using indentation. Includes any code and comments 
+        that follow the indentation level of the definition.
         
         Args:
             lines: List of all lines in the file
@@ -162,63 +129,37 @@ class ProjectFolder:
             End line index (0-based, inclusive)
         """
         end_idx = start_idx
-        last_code_idx = start_idx  # Track last line with actual code
-        
+
         # Skip the definition line itself
         for i in range(start_idx + 1, len(lines)):
             line = lines[i]
             
             # Check if it's empty or comment
             stripped = line.strip()
-            if not stripped or stripped.startswith('#'):
-                # Don't update end_idx for trailing empty/comment lines
-                # Only update if we've seen code at proper indentation
+            if not stripped:
                 continue
-            
+
             # Check indentation
             indent = self._get_indentation(line)
-            
-            # If indentation is less than or equal to start, we've exited the block
-            if indent <= start_indent:
-                break
-            
-            # This is a code line with proper indentation
-            end_idx = i
-            last_code_idx = i
+
+            if stripped.startswith('#'):
+                # Only update end_idx for comment lines if they follow the indentation level of code lines
+                if indent > start_indent:
+                    end_idx = i
+            else:
+                # If indentation is less than or equal to start, we've exited the block
+                if indent <= start_indent:
+                    break
+                # This is a code line with proper indentation
+                end_idx = i
         
         return end_idx
     
     def _error_response(self, error: str, **kwargs) -> Dict[str, Any]:
-        """
-        Create a standardized error response.
-        
-        Args:
-            error: Error message
-            **kwargs: Additional fields to include
-            
-        Returns:
-            Error response dictionary
-        """
-        response = {
-            'success': False,
-            'error': error
-        }
-        response.update(kwargs)
-        return response
+        return {'success': False, 'error': error, **kwargs}
     
     def _success_response(self, **kwargs) -> Dict[str, Any]:
-        """
-        Create a standardized success response.
-        
-        Args:
-            **kwargs: Fields to include in the response
-            
-        Returns:
-            Success response dictionary
-        """
-        response = {'success': True}
-        response.update(kwargs)
-        return response
+        return {'success': True, **kwargs}
     
     def _file_metadata(self, file_path: Path) -> Dict[str, Any]:
         """
@@ -232,20 +173,45 @@ class ProjectFolder:
         """
         try:
             stat_info = os.stat(file_path)
-            rel_path = file_path.relative_to(self.project_path)
-            
-            return {
-                'path': str(rel_path),
-                'absolute_path': str(file_path),
+            rel_path = str(file_path.relative_to(self.project_path))
+            mtime = stat_info.st_mtime
+
+            if rel_path in self._metadata_cache:
+                cached = self._metadata_cache[rel_path]
+                if cached['mtime'] == mtime:
+                    return cached
+
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                line_count = sum(1 for _ in f)
+
+            metadata = {
+                'path': rel_path,
+                'mtime': mtime,
                 'size_bytes': stat_info.st_size,
-                'size_lines': self._get_line_count(file_path)
+                'size_lines': line_count
             }
+            self._metadata_cache[rel_path] = metadata
+            return metadata
         except Exception as e:
             return {
                 'path': str(file_path.relative_to(self.project_path)),
                 'error': str(e)
             }
     
+    def _clear_metadata_cache(self, file_path: Path):
+        """
+        Clear metadata cache for a specific file.
+        
+        Args:
+            file_path: Absolute path to the file
+        """
+        try:
+            rel_path = str(file_path.relative_to(self.project_path))
+            if rel_path in self._metadata_cache:
+                del self._metadata_cache[rel_path]
+        except Exception: # File not in project folder or other error
+            pass
+
     def list_files(self, pattern: str = "*") -> Dict[str, Any]:
         """
         List all files in the project folder recursively.
@@ -300,18 +266,14 @@ class ProjectFolder:
                 return self._error_response(f"Path is not a file: {file_path}")
             
             # Try to read as text
-            try:
-                with open(full_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-            except UnicodeDecodeError:
-                # Try with error handling for binary files
-                with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
-                    content = f.read()
+            with open(full_path, 'r', encoding='utf-8') as f:
+                content = f.read()
             
             metadata = self._file_metadata(full_path)
             
             return self._success_response(content=content, metadata=metadata)
-        
+        except UnicodeDecodeError:
+            return self._error_response(f"File is not a text file: {file_path}")
         except ProjectFolderError as e:
             return self._error_response(str(e))
         except PermissionError:
@@ -349,9 +311,7 @@ class ProjectFolder:
                 f.write(content)
             
             # Clear cache for this file
-            path_str = str(full_path)
-            if path_str in self._line_count_cache:
-                del self._line_count_cache[path_str]
+            self._clear_metadata_cache(full_path)
             
             metadata = self._file_metadata(full_path)
             
@@ -390,10 +350,8 @@ class ProjectFolder:
             rel_path = str(full_path.relative_to(self.project_path))
             
             # Remove from cache
-            path_str = str(full_path)
-            if path_str in self._line_count_cache:
-                del self._line_count_cache[path_str]
-            
+            self._clear_metadata_cache(full_path)
+
             # Delete the file
             full_path.unlink()
             
@@ -440,12 +398,8 @@ class ProjectFolder:
                 return self._error_response("end_line must be >= start_line")
             
             # Read file lines
-            try:
-                with open(full_path, 'r', encoding='utf-8') as f:
-                    all_lines = f.readlines()
-            except UnicodeDecodeError:
-                with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
-                    all_lines = f.readlines()
+            with open(full_path, 'r', encoding='utf-8') as f:
+                all_lines = f.readlines()
             
             # Validate line numbers
             total_lines = len(all_lines)
@@ -468,7 +422,8 @@ class ProjectFolder:
                 end_line=actual_end,
                 path=rel_path
             )
-        
+        except UnicodeDecodeError:
+            return self._error_response(f"File is not a text file: {file_path}")
         except ProjectFolderError as e:
             return self._error_response(str(e))
         except PermissionError:
@@ -541,8 +496,8 @@ class ProjectFolder:
                                     'line': line_content
                                 })
                 
-                except (PermissionError, OSError):
-                    # Skip files we can't read
+                except (PermissionError, OSError, UnicodeDecodeError):
+                    # Skip files we can't read or decode
                     continue
             
             return self._success_response(matches=matches, count=len(matches))
@@ -566,7 +521,6 @@ class ProjectFolder:
             Dictionary with:
                 - success: True if operation succeeded
                 - definitions: List of definition dictionaries with:
-                    - type: 'class' or 'function' or 'method'
                     - name: Name of the definition
                     - file: Relative file path
                     - start_line: Starting line number (1-indexed)
@@ -583,6 +537,8 @@ class ProjectFolder:
                 pattern = rf'^\s*class\s+{re.escape(name)}\s*[\(:]'
             elif def_type == 'def':
                 pattern = rf'^\s*def\s+{re.escape(name)}\s*\('
+            elif def_type == 'method':
+                pattern = rf'^\s*def\s+{re.escape(name)}\s*\((self|cls)[,\)]'
             else:
                 # Match both class and def
                 pattern = rf'^\s*(class|def)\s+{re.escape(name)}\s*[\(:]'
@@ -605,14 +561,6 @@ class ProjectFolder:
                             # Determine indentation and type
                             indent = self._get_indentation(line)
                             
-                            # Determine if it's a class, method, or function
-                            if 'class' in line:
-                                def_kind = 'class'
-                            elif indent > 0:
-                                def_kind = 'method'
-                            else:
-                                def_kind = 'function'
-                            
                             # Find the end of the definition
                             end_idx = self._find_def_end(lines, i, indent)
                             
@@ -623,7 +571,6 @@ class ProjectFolder:
                             rel_path = str(file_path.relative_to(self.project_path))
                             
                             definitions.append({
-                                'type': def_kind,
                                 'name': name,
                                 'file': rel_path,
                                 'start_line': i + 1,  # Convert to 1-indexed
@@ -640,123 +587,3 @@ class ProjectFolder:
         except Exception as e:
             return self._error_response(f"Find definition failed: {str(e)}")
 
-
-# Convenience functions for standalone use
-def create_project_folder(project_path: str) -> ProjectFolder:
-    """
-    Create a ProjectFolder instance.
-    
-    Args:
-        project_path: Path to the project folder
-        
-    Returns:
-        ProjectFolder instance
-    """
-    return ProjectFolder(project_path)
-
-
-if __name__ == '__main__':
-    """
-    Example usage and basic smoke tests.
-    """
-    import json
-    import tempfile
-    import shutil
-    
-    print("=== MCP Utils Example Usage ===\n")
-    
-    # Create a temporary test project
-    test_dir = tempfile.mkdtemp(prefix="mcp_test_")
-    print(f"Created test directory: {test_dir}\n")
-    
-    try:
-        # Initialize ProjectFolder
-        pf = ProjectFolder(test_dir)
-        print(f"Initialized ProjectFolder: {pf.project_path}\n")
-        
-        # Test 1: Create files
-        print("1. Creating test files...")
-        result = pf.create_file("test.py", """def hello(name):
-    \"\"\"Say hello to someone.\"\"\"
-    print(f"Hello, {name}!")
-    return True
-
-class Greeter:
-    def __init__(self, greeting):
-        self.greeting = greeting
-    
-    def greet(self, name):
-        print(f"{self.greeting}, {name}!")
-""")
-        print(f"   Created test.py: {result['success']}")
-        
-        result = pf.create_file("subdir/data.txt", "Line 1\nLine 2\nLine 3\nLine 4\nLine 5")
-        print(f"   Created subdir/data.txt: {result['success']}\n")
-        
-        # Test 2: List files
-        print("2. Listing files...")
-        result = pf.list_files()
-        print(f"   Found {result['count']} files:")
-        for file in result['files']:
-            print(f"   - {file['path']} ({file['size_bytes']} bytes, {file['size_lines']} lines)")
-        print()
-        
-        # Test 3: Load file
-        print("3. Loading test.py...")
-        result = pf.load_file("test.py")
-        if result['success']:
-            print(f"   Loaded {result['metadata']['size_lines']} lines")
-            print(f"   First 50 chars: {result['content'][:50]}...")
-        print()
-        
-        # Test 4: Get line range
-        print("4. Getting lines 5-7 from test.py...")
-        result = pf.get_line_range("test.py", 5, 7)
-        if result['success']:
-            print(f"   Lines {result['start_line']}-{result['end_line']}:")
-            for line in result['lines']:
-                print(f"      {line}")
-        print()
-        
-        # Test 5: Search files
-        print("5. Searching for 'print' in all files...")
-        result = pf.search_files("print", file_pattern="*.py")
-        if result['success']:
-            print(f"   Found {result['count']} matches:")
-            for match in result['matches']:
-                print(f"   - {match['file']}:{match['line_number']}: {match['line'][:60]}")
-        print()
-        
-        # Test 6: Find Python definitions
-        print("6. Finding 'hello' function...")
-        result = pf.find_python_definition("hello", def_type="def")
-        if result['success'] and result['count'] > 0:
-            defn = result['definitions'][0]
-            print(f"   Found {defn['type']} in {defn['file']} at lines {defn['start_line']}-{defn['end_line']}")
-            print(f"   Text preview: {defn['text'][:80]}...")
-        print()
-        
-        print("7. Finding 'Greeter' class...")
-        result = pf.find_python_definition("Greeter", def_type="class")
-        if result['success'] and result['count'] > 0:
-            defn = result['definitions'][0]
-            print(f"   Found {defn['type']} in {defn['file']} at lines {defn['start_line']}-{defn['end_line']}")
-        print()
-        
-        # Test 7: Remove file
-        print("8. Removing subdir/data.txt...")
-        result = pf.remove_file("subdir/data.txt")
-        print(f"   Removed: {result['success']}")
-        
-        # Test path validation
-        print("\n9. Testing security (path validation)...")
-        result = pf.load_file("../outside.txt")
-        if not result['success'] and 'outside the project folder' in result.get('error', ''):
-            print(f"   ✓ Correctly rejected path traversal attempt")
-        
-        print("\n=== All tests completed successfully! ===")
-    
-    finally:
-        # Clean up
-        shutil.rmtree(test_dir)
-        print(f"\nCleaned up test directory: {test_dir}")

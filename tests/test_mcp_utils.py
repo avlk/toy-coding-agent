@@ -21,7 +21,7 @@ import sys
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from mcp_utils import ProjectFolder, ProjectFolderError, create_project_folder
+from mcp_utils import ProjectFolder, ProjectFolderError
 
 
 @pytest.fixture
@@ -35,6 +35,7 @@ def temp_project():
         "test.py": """def function_one():
     '''A simple function.'''
     return 1
+    # Trailing comment
 
 class MyClass:
     def __init__(self):
@@ -80,8 +81,8 @@ class TestProjectFolderInit:
         """Test initialization with valid project path."""
         pf = ProjectFolder(temp_project)
         assert pf.project_path == Path(temp_project).resolve()
-        assert isinstance(pf._line_count_cache, dict)
-        assert len(pf._line_count_cache) == 0
+        assert isinstance(pf._metadata_cache, dict)
+        assert len(pf._metadata_cache) == 0
     
     def test_init_with_relative_path(self, temp_project):
         """Test initialization with relative path."""
@@ -108,13 +109,6 @@ class TestProjectFolderInit:
         file_path = Path(temp_project) / "simple.txt"
         with pytest.raises(ProjectFolderError, match="not a directory"):
             ProjectFolder(str(file_path))
-    
-    def test_create_project_folder_convenience(self, temp_project):
-        """Test the convenience function."""
-        pf = create_project_folder(temp_project)
-        assert isinstance(pf, ProjectFolder)
-        assert pf.project_path == Path(temp_project).resolve()
-
 
 class TestPathValidation:
     """Tests for path validation and security."""
@@ -153,40 +147,40 @@ class TestPathValidation:
             project_folder._validate_path("subdir/../../outside.txt")
 
 
-class TestLineCountCaching:
-    """Tests for line count caching functionality."""
+class TestMetadataCaching:
+    """Tests for metadata caching functionality."""
     
-    def test_get_line_count_basic(self, project_folder):
+    def test_metadata_basic(self, project_folder):
         """Test basic line counting."""
         file_path = project_folder.project_path / "simple.txt"
-        count = project_folder._get_line_count(file_path)
-        assert count == 3
+        metadata = project_folder._file_metadata(file_path)
+        assert metadata['size_lines'] == 3
     
-    def test_get_line_count_empty_file(self, project_folder):
+    def test_metadata_empty_file(self, project_folder):
         """Test line counting for empty file."""
         file_path = project_folder.project_path / "empty.txt"
-        count = project_folder._get_line_count(file_path)
-        assert count == 0
+        metadata = project_folder._file_metadata(file_path)
+        assert metadata['size_lines'] == 0
     
-    def test_get_line_count_uses_cache(self, project_folder):
-        """Test that line count is cached."""
+    def test_metadata_uses_cache(self, project_folder):
+        """Test that metadata is cached."""
         file_path = project_folder.project_path / "simple.txt"
         
         # First call - should cache
-        count1 = project_folder._get_line_count(file_path)
-        assert str(file_path) in project_folder._line_count_cache
+        metadata1 = project_folder._file_metadata(file_path)
+        assert str("simple.txt") in project_folder._metadata_cache
         
         # Second call - should use cache
-        count2 = project_folder._get_line_count(file_path)
-        assert count1 == count2
+        metadata2 = project_folder._file_metadata(file_path)
+        assert metadata1 == metadata2
     
-    def test_get_line_count_invalidates_on_modification(self, project_folder):
+    def test_metadata_invalidates_on_modification(self, project_folder):
         """Test that cache is invalidated when file is modified."""
         file_path = project_folder.project_path / "simple.txt"
         
         # Get initial count
-        count1 = project_folder._get_line_count(file_path)
-        assert count1 == 3
+        metadata1 = project_folder._file_metadata(file_path)
+        assert metadata1['size_lines'] == 3
         
         # Modify file
         import time
@@ -195,15 +189,14 @@ class TestLineCountCaching:
             f.write("\nLine 4")
         
         # Should detect change and recount
-        count2 = project_folder._get_line_count(file_path)
-        assert count2 == 4
+        metadata2 = project_folder._file_metadata(file_path)
+        assert metadata2['size_lines'] == 4
     
-    def test_get_line_count_nonexistent_file(self, project_folder):
-        """Test line counting for non-existent file returns 0."""
+    def test_file_metadata_nonexistent_file(self, project_folder):
+        """Test metadata for non-existent file returns error."""
         file_path = project_folder.project_path / "nonexistent.txt"
-        count = project_folder._get_line_count(file_path)
-        assert count == 0
-
+        metadata = project_folder._file_metadata(file_path)
+        assert metadata['error'] is not None
 
 class TestListFiles:
     """Tests for list_files() functionality."""
@@ -228,7 +221,6 @@ class TestListFiles:
         
         for file_info in result['files']:
             assert 'path' in file_info
-            assert 'absolute_path' in file_info
             assert 'size_bytes' in file_info
             assert 'size_lines' in file_info
             assert file_info['size_bytes'] >= 0
@@ -356,9 +348,23 @@ class TestCreateFile:
         assert file_path.exists()
         assert file_path.parent.is_dir()
     
-    def test_create_file_overwrites_existing(self, project_folder):
-        """Test that creating file overwrites existing."""
+    def test_create_file_fails_if_exists(self, project_folder):
+        """Test that creating file fails if it already exists."""
+        # Try to create a file that already exists
         result = project_folder.create_file("simple.txt", "New content")
+        
+        assert result['success'] is False
+        assert 'error' in result
+        assert 'already exists' in result['error'].lower()
+        
+        # Verify original content is preserved
+        file_path = project_folder.project_path / "simple.txt"
+        with open(file_path, 'r') as f:
+            assert f.read() == "Line 1\nLine 2\nLine 3"
+    
+    def test_create_file_with_overwrite(self, project_folder):
+        """Test that creating file with overwrite=True replaces existing."""
+        result = project_folder.create_file("simple.txt", "New content", overwrite=True)
         
         assert result['success'] is True
         
@@ -368,20 +374,21 @@ class TestCreateFile:
             assert f.read() == "New content"
     
     def test_create_file_updates_cache(self, project_folder):
-        """Test that creating file updates cache with new line count."""
-        file_path = project_folder.project_path / "simple.txt"
+        """Test that creating file with overwrite updates cache with new line count."""
+        file_name = "simple.txt"
+        file_path = project_folder.project_path / file_name
         
         # Cache the file (original has 3 lines)
-        old_count = project_folder._get_line_count(file_path)
-        assert old_count == 3
-        assert str(file_path) in project_folder._line_count_cache
+        old_metadata = project_folder._file_metadata(file_path)
+        assert old_metadata['size_lines'] == 3
+        assert file_name in project_folder._metadata_cache
         
         # Create/overwrite file with 4 lines
-        project_folder.create_file("simple.txt", "New\nContent\nWith\nLines")
+        project_folder.create_file(file_name, "New\nContent\nWith\nLines", overwrite=True)
         
         # Cache should have new count
-        new_count = project_folder._get_line_count(file_path)
-        assert new_count == 4
+        new_metadata = project_folder._file_metadata(file_path)
+        assert new_metadata['size_lines'] == 4
     
     def test_create_file_path_traversal(self, project_folder):
         """Test that path traversal is blocked."""
@@ -426,17 +433,18 @@ class TestRemoveFile:
     
     def test_remove_file_clears_cache(self, project_folder):
         """Test that removing file clears cache."""
-        file_path = project_folder.project_path / "simple.txt"
+        file_name = "simple.txt"
+        file_path = project_folder.project_path / file_name
         
         # Cache the file
-        project_folder._get_line_count(file_path)
-        assert str(file_path) in project_folder._line_count_cache
+        project_folder._file_metadata(file_path)
+        assert file_name in project_folder._metadata_cache
         
         # Remove file
-        project_folder.remove_file("simple.txt")
+        project_folder.remove_file(file_name)
         
         # Cache should be cleared
-        assert str(file_path) not in project_folder._line_count_cache
+        assert file_name not in project_folder._metadata_cache
     
     def test_remove_file_nonexistent(self, project_folder):
         """Test removing non-existent file."""
@@ -614,12 +622,14 @@ class TestFindPythonDefinition:
         assert result['count'] == 1
         
         defn = result['definitions'][0]
-        assert defn['type'] == 'function'
         assert defn['name'] == 'function_one'
         assert defn['file'] == 'test.py'
         assert defn['start_line'] == 1
+        assert len(defn['text'].splitlines()) == 4  # Shall include definition, docstring, return, and trailing comment
         assert 'def function_one' in defn['text']
         assert 'return 1' in defn['text']
+        # Trailing comment is included as it follows code line indentation
+        assert 'Trailing comment' in defn['text'] 
     
     def test_find_class_definition(self, project_folder):
         """Test finding class definition."""
@@ -629,7 +639,6 @@ class TestFindPythonDefinition:
         assert result['count'] == 1
         
         defn = result['definitions'][0]
-        assert defn['type'] == 'class'
         assert defn['name'] == 'MyClass'
         assert 'class MyClass' in defn['text']
         assert 'def __init__' in defn['text']
@@ -643,13 +652,13 @@ class TestFindPythonDefinition:
         assert result['count'] == 1
         
         defn = result['definitions'][0]
-        assert defn['type'] == 'method'
         assert defn['name'] == 'method_one'
         assert 'def method_one' in defn['text']
     
     def test_find_definition_any_type(self, project_folder):
         """Test finding definition without specifying type."""
-        result = project_folder.find_python_definition("MyClass")
+        result = project_folder.find_python_definition("MyClass"
+                                                       )
         
         assert result['success'] is True
         assert result['count'] >= 1  # Could match class
@@ -735,11 +744,12 @@ class TestIndentationParser:
             "    ",
             "    return 1",
             "",
+            "# trailing comment",
             "def bar():"
         ]
         
         end_idx = project_folder._find_def_end(lines, 0, 0)
-        assert end_idx == 4
+        assert end_idx == 3  # Should stop at 'return 1', not include trailing empty/comments
 
 
 class TestHelperFunctions:
@@ -767,7 +777,6 @@ class TestHelperFunctions:
         metadata = project_folder._file_metadata(file_path)
         
         assert 'path' in metadata
-        assert 'absolute_path' in metadata
         assert 'size_bytes' in metadata
         assert 'size_lines' in metadata
         assert metadata['path'] == 'simple.txt'
