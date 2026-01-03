@@ -50,7 +50,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
     
     # Expose list_files as MCP tool
     @mcp.tool()
-    def list_files(pattern: str = "*") -> str:
+    def list_files(pattern: str = "*") -> dict:
         """
         List all files in the project folder recursively.
         
@@ -59,14 +59,13 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                     Examples: "*.py" for Python files, "test_*.py" for test files
         
         Returns:
-            JSON string with files list, each containing path, size in bytes and lines
+            Dictionary with files list, each containing path, size in bytes and lines
         """
-        result = pf.list_files(pattern=pattern)
-        return json.dumps(result, indent=2)
+        return pf.list_files(pattern=pattern)
     
     # Expose load_file as MCP tool
     @mcp.tool()
-    def load_file(file_path: str) -> str:
+    def load_file(file_path: str) -> dict:
         """
         Load and return the complete contents of a file.
         
@@ -75,14 +74,13 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                       Example: "src/main.py" or "subdir/file.txt"
         
         Returns:
-            JSON string with file content and metadata (path, size)
+            Dictionary with file content and metadata (path, size)
         """
-        result = pf.load_file(file_path)
-        return json.dumps(result, indent=2)
+        return pf.load_file(file_path)
     
     # Expose create_file as MCP tool
     @mcp.tool()
-    def create_file(file_path: str, content: str, overwrite: bool = False) -> str:
+    def create_file(file_path: str, content: str, overwrite: bool = False) -> dict:
         """
         Create a new file with given content.
         Fails if file already exists unless overwrite=True.
@@ -94,14 +92,13 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             overwrite: If True, overwrite existing file. If False, fail if file exists (default: False)
         
         Returns:
-            JSON string with success status and file metadata, or error if file exists
+            Dictionary with success status and file metadata, or error if file exists
         """
-        result = pf.create_file(file_path, content, overwrite=overwrite)
-        return json.dumps(result, indent=2)
+        return pf.create_file(file_path, content, overwrite=overwrite)
     
     # Expose remove_file as MCP tool
     @mcp.tool()
-    def remove_file(file_path: str) -> str:
+    def remove_file(file_path: str) -> dict:
         """
         Remove a file from the project folder.
         
@@ -109,14 +106,13 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             file_path: Path to the file to remove (relative to project folder)
         
         Returns:
-            JSON string with success status
+            Dictionary with success status
         """
-        result = pf.remove_file(file_path)
-        return json.dumps(result, indent=2)
+        return pf.remove_file(file_path)
     
     # Expose get_line_range as MCP tool
     @mcp.tool()
-    def get_line_range(file_path: str, start_line: int, end_line: int) -> str:
+    def get_line_range(file_path: str, start_line: int, end_line: int) -> dict:
         """
         Retrieve a specific range of lines from a file.
         
@@ -126,10 +122,9 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             end_line: Ending line number (1-indexed, inclusive)
         
         Returns:
-            JSON string with the requested lines and metadata
+            Dictionary with the requested lines and metadata
         """
-        result = pf.get_line_range(file_path, start_line, end_line)
-        return json.dumps(result, indent=2)
+        return pf.get_line_range(file_path, start_line, end_line)
     
     # Expose search_files as MCP tool
     @mcp.tool()
@@ -138,7 +133,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         is_regex: bool = False,
         case_sensitive: bool = True,
         file_pattern: str = "*"
-    ) -> str:
+    ) -> dict:
         """
         Search for a string or regex pattern across all files in the project.
         
@@ -150,19 +145,18 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                          Examples: "*.py", "src/**/*.js"
         
         Returns:
-            JSON string with list of matches containing file, line_number, and line content
+            Dictionary with list of matches containing file, line_number, and line content
         """
-        result = pf.search_files(
+        return pf.search_files(
             pattern=pattern,
             is_regex=is_regex,
             case_sensitive=case_sensitive,
             file_pattern=file_pattern
         )
-        return json.dumps(result, indent=2)
     
     # Expose find_python_definition as MCP tool
     @mcp.tool()
-    def find_python_definition(name: str, def_type: Optional[str] = None) -> str:
+    def find_python_definition(name: str, def_type: Optional[str] = None) -> dict:
         """
         Find Python class or function/method definitions by name.
         
@@ -174,19 +168,18 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                      Use None (default) to find both
         
         Returns:
-            JSON string with list of definitions containing:
+            Dictionary with list of definitions containing:
             - type: 'class', 'function', or 'method'
             - name: name of the definition
             - file: relative file path
             - start_line and end_line: location in file
             - text: full source code of the definition
         """
-        result = pf.find_python_definition(name=name, def_type=def_type)
-        return json.dumps(result, indent=2)
+        return pf.find_python_definition(name=name, def_type=def_type)
     
     # Expose patch_project as MCP tool
     @mcp.tool()
-    def apply_patch(patch_content: str, fuzziness: int = 0) -> str:
+    def apply_patch(patch_content: str, fuzziness: int = 0) -> dict:
         """
         Apply a unified diff patch to files in the project.
         
@@ -215,7 +208,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                       2 = allow small character differences (Levenshtein distance <= 3)
         
         Returns:
-            JSON string with:
+            Dictionary with:
             - success: True if all hunks applied successfully
             - message: Summary of the operation
             - details: Information about processed files and hunks
@@ -227,25 +220,22 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             # Apply patch and capture result
             success = patch_project(project_dir, patch_lines, fuzziness=fuzziness)
             
-            result = {
+            return {
                 "success": success,
                 "message": "Patch applied successfully" if success else "Patch application failed",
                 "project_path": str(project_dir)
             }
             
-            return json.dumps(result, indent=2)
-            
         except Exception as e:
-            error_result = {
+            return {
                 "success": False,
                 "error": str(e),
                 "message": "Exception occurred during patch application"
             }
-            return json.dumps(error_result, indent=2)
     
     # Expose execute_sandboxed as MCP tool
     @mcp.tool()
-    def execute_project(cmd_args: str, timeout: int = 30) -> str:
+    def execute_project(cmd_args: str, timeout: int = 30) -> dict:
         """
         Execute a Python project with sandboxing.
         
@@ -260,7 +250,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             timeout: Execution timeout in seconds (default: 30)
         
         Returns:
-            JSON string with:
+            Dictionary with:
             - success: True if execution succeeded (exit code 0)
             - stdout: Standard output from the execution
             - stderr: Standard error from the execution
@@ -273,23 +263,21 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             ├── .venv/            # auto-created if doesn't exist
             └── requirements.txt  # optional, auto-installed if present
         """
-        project_path = str(pf.project_path)
-        result = execute_sandboxed(
-            project=project_path,
+        return execute_sandboxed(
+            project=str(pf.project_path),
             cmd_args=cmd_args,
             timeout=timeout,
             method=sandbox_method
         )
-        return json.dumps(result, indent=2)
     
     # Add a resource to expose project info
     @mcp.resource("project://info")
-    def get_project_info() -> str:
+    def get_project_info() -> dict:
         """Get information about the current project."""
-        return json.dumps({
+        return {
             "project_path": str(pf.project_path),
             "description": "File operations MCP server for coding agent project"
-        }, indent=2)
+        }
     
     return mcp
 
