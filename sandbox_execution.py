@@ -59,9 +59,13 @@ class FirejailMethod:
         return True
     
     @staticmethod
-    def execute(project_path: str, entry_file: str, args_list: list, venv_python: str, timeout: int = 30) -> dict:
+    def execute(project_path: str, entry_file: str, args_list: list, timeout: int = 30) -> dict:
         """Execute a project using firejail for sandboxing."""
         try:
+            # Setup venv and get python path
+            venv_path = _setup_project_venv(project_path)
+            venv_python = os.path.join(venv_path, 'bin', 'python')
+            
             cmd = [
                 'firejail', '--quiet', '--noprofile', '--net=none', '--private',
                 '--noroot', '--nosound', '--no3d', '--nodvd', '--notv', '--nou2f',
@@ -99,22 +103,39 @@ class DockerMethod:
         return True
     
     @staticmethod
-    def execute(project_path: str, entry_file: str, args_list: list, venv_python: str, timeout: int = 30, image: str = 'python:3.12-slim') -> dict:
+    def execute(project_path: str, entry_file: str, args_list: list, timeout: int = 30, image: str = 'python:3.12-slim') -> dict:
         """Execute a project in a Docker container."""
         try:
             # Mount project as /project in container
             entry_filename = os.path.basename(entry_file)
-            venv_python_docker = os.path.join('/project/.venv', 'bin', 'python')
             entry_path_docker = os.path.join('/project', entry_filename)
             
-            cmd = [
-                'docker', 'run', '--rm', '--network=none', '--memory=512m', '--cpus=1',
-                '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid',
-                '-v', f'{project_path}:/project:ro',
-                '-w', '/project',
-                image,
-                venv_python_docker, entry_path_docker
-            ] + args_list
+            # Check if requirements.txt exists
+            requirements_file = os.path.join(project_path, 'requirements.txt')
+            has_requirements = os.path.exists(requirements_file)
+            
+            # Build command - if requirements exist, install them first then run
+            if has_requirements:
+                # Use sh -c to install requirements and then run the script
+                cmd_string = f'pip install --quiet -r /project/requirements.txt && python {entry_path_docker}'
+                if args_list:
+                    cmd_string += ' ' + ' '.join(args_list)
+                cmd = [
+                    'docker', 'run', '--rm', '--memory=512m', '--cpus=1',
+                    '-v', f'{project_path}:/project:ro',
+                    '-w', '/project',
+                    image,
+                    'sh', '-c', cmd_string
+                ]
+            else:
+                # Simple execution without requirements
+                cmd = [
+                    'docker', 'run', '--rm', '--network=none', '--memory=512m', '--cpus=1',
+                    '-v', f'{project_path}:/project:ro',
+                    '-w', '/project',
+                    image,
+                    'python', entry_path_docker
+                ] + args_list
             
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
             return _make_result(result.returncode == 0, result.stdout, result.stderr, result.returncode, 'docker')
@@ -138,9 +159,13 @@ class BubblewrapMethod:
         return shutil.which('bwrap') is not None
     
     @staticmethod
-    def execute(project_path: str, entry_file: str, args_list: list, venv_python: str, timeout: int = 30) -> dict:
+    def execute(project_path: str, entry_file: str, args_list: list, timeout: int = 30) -> dict:
         """Execute a project using bubblewrap."""
         try:
+            # Setup venv and get python path
+            venv_path = _setup_project_venv(project_path)
+            venv_python = os.path.join(venv_path, 'bin', 'python')
+            
             cmd = [
                 'bwrap',
                 '--ro-bind', '/usr', '/usr',
@@ -178,9 +203,13 @@ class SubprocessMethod:
         return True
     
     @staticmethod
-    def execute(project_path: str, entry_file: str, args_list: list, venv_python: str, timeout: int = 30) -> dict:
+    def execute(project_path: str, entry_file: str, args_list: list, timeout: int = 30) -> dict:
         """Execute a project using subprocess (no sandboxing)."""
         try:
+            # Setup venv and get python path
+            venv_path = _setup_project_venv(project_path)
+            venv_python = os.path.join(venv_path, 'bin', 'python')
+            
             cmd = [venv_python, entry_file] + args_list
             
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=project_path)
@@ -293,8 +322,6 @@ def execute_sandboxed(
         return _make_result(False, '', f'Project directory not found: {project_path}', -1, method)
     
     try:
-        venv_path = _setup_project_venv(project_path)
-        
         # Parse cmd_args
         parts = cmd_args.split()
         if not parts:
@@ -306,26 +333,32 @@ def execute_sandboxed(
         entry_file = os.path.join(project_path, entry_point)
         if not os.path.exists(entry_file):
             return _make_result(False, '', f'Entry point not found: {entry_file}', -1, method)
-        
-        venv_python = os.path.join(venv_path, 'bin', 'python')
     except Exception as e:
         return _make_result(False, '', f'Setup error: {str(e)}', -1, method)
     
     # Dispatch to specific method using registry
     if method in SANDBOX_METHODS:
-        return SANDBOX_METHODS[method].execute(project_path, entry_file, args_list, venv_python, timeout)
+        return SANDBOX_METHODS[method].execute(project_path, entry_file, args_list, timeout)
     elif method == 'auto':
         # Try methods in order until one works
+        last_error = None
         for method_class in AUTO_METHODS:
             if not method_class.is_available():
                 continue
             print(f"Trying sandbox method: {method_class.name}")
             
-            result = method_class.execute(project_path, entry_file, args_list, venv_python, timeout)
-            if 'not found' not in result['stderr']:
+            result = method_class.execute(project_path, entry_file, args_list, timeout)
+            # If successful, return immediately
+            if result['success']:
                 return result
+            # If failed, store error and try next method
+            last_error = result['stderr']
+            print(f"  Failed: {last_error[:100]}...")
         
-        # Return error if no sandbox methods are available
-        return _make_result(False, '', 'No available sandbox methods found on the system.', -1, 'auto')
+        # Return error if no sandbox methods succeeded
+        error_msg = 'No available sandbox methods found on the system.'
+        if last_error:
+            error_msg = f'All sandbox methods failed. Last error: {last_error}'
+        return _make_result(False, '', error_msg, -1, 'auto')
     else:
         return _make_result(False, '', f'Unknown sandbox method: {method}', -1, method)
