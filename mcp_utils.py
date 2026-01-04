@@ -279,7 +279,7 @@ class ProjectFolder:
             
         Returns:
             Dictionary with:
-                - content: File contents as string
+                - content: File contents as list of lines (line endings removed)
                 - metadata: File metadata
                 
         Raises:
@@ -296,7 +296,7 @@ class ProjectFolder:
             
             # Try to read as text
             with open(full_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+                content = [line.rstrip('\n\r') for line in f]
             
             metadata = self.get_metadata(full_path)
             
@@ -310,13 +310,13 @@ class ProjectFolder:
         except Exception as e:
             raise ProjectFolderError(f"Failed to load file: {str(e)}")
     
-    def create_file(self, file_path: str, content: str, overwrite: bool = False) -> Dict[str, Any]:
+    def create_file(self, file_path: str, content: Union[str, List[str]], overwrite: bool = False) -> Dict[str, Any]:
         """
         Create a new file with the given content.
         
         Args:
             file_path: Path to the file (relative to project folder or absolute)
-            content: Content to write to the file
+            content: Content to write to the file (string or list of lines)
             overwrite: If True, overwrite existing file. If False, fail if file exists. Default: False
             
         Returns:
@@ -334,6 +334,10 @@ class ProjectFolder:
             
             # Create parent directories if needed
             full_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Convert list to string if needed
+            if isinstance(content, list):
+                content = '\n'.join(content)
             
             # Write the file
             with open(full_path, 'w', encoding='utf-8') as f:
