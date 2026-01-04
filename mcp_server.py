@@ -75,7 +75,9 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                       Example: "src/main.py" or "subdir/file.txt"
         
         Returns:
-            Dictionary with file content and metadata (path, size)
+            Dictionary with:
+            - content: List of lines (line endings removed)
+            - metadata: File metadata (path, size_bytes, size_lines, mtime)
         """
         return pf.load_file(file_path)
     
@@ -89,7 +91,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Args:
             file_path: Path to the file (relative to project folder)
-            content: Content to write to the file
+            content: Content to write - can be a string or list of lines (will be joined with newlines)
             overwrite: If True, overwrite existing file. If False, fail if file exists (default: False)
         
         Returns:

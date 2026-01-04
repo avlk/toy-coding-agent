@@ -263,21 +263,22 @@ class TestLoadFile:
         result = project_folder.load_file("simple.txt")
         
         assert 'content' in result
-        assert result['content'] == "Line 1\nLine 2\nLine 3"
+        assert result['content'] == ["Line 1", "Line 2", "Line 3"]
         assert 'metadata' in result
     
     def test_load_file_with_unicode(self, project_folder):
         """Test loading file with Unicode content."""
         result = project_folder.load_file("unicode.txt")
         
-        assert "世界" in result['content']
-        assert "🌍" in result['content']
+        content_str = '\n'.join(result['content'])
+        assert "世界" in content_str
+        assert "🌍" in content_str
     
     def test_load_file_empty(self, project_folder):
         """Test loading empty file."""
         result = project_folder.load_file("empty.txt")
         
-        assert result['content'] == ""
+        assert result['content'] == []
     
     def test_load_file_with_subdirectory(self, project_folder):
         """Test loading file from subdirectory."""
@@ -380,6 +381,35 @@ class TestCreateFile:
         file_path = project_folder.project_path / "empty_new.txt"
         assert file_path.exists()
         assert file_path.stat().st_size == 0
+    
+    def test_create_file_with_list_of_lines(self, project_folder):
+        """Test creating file with list of lines."""
+        lines = ["Line 1", "Line 2", "Line 3"]
+        metadata = project_folder.create_file("list_test.txt", lines)
+        
+        assert 'path' in metadata
+        assert metadata['path'] == 'list_test.txt'
+        
+        # Verify file content using load_file
+        result = project_folder.load_file("list_test.txt")
+        assert result['content'] == lines
+    
+    def test_create_file_round_trip(self, project_folder):
+        """Test load -> modify -> save round trip with list of lines."""
+        # Load existing file
+        result = project_folder.load_file("simple.txt")
+        lines = result['content']
+        
+        # Modify
+        lines[1] = "Modified Line 2"
+        
+        # Save back
+        metadata = project_folder.create_file("modified.txt", lines)
+        assert 'path' in metadata
+        
+        # Verify changes
+        result2 = project_folder.load_file("modified.txt")
+        assert result2['content'] == ["Line 1", "Modified Line 2", "Line 3"]
 
 
 class TestRemoveFile:
@@ -718,7 +748,7 @@ class TestEdgeCases:
         pf = ProjectFolder(temp_project)
         result = pf.load_file("no_newline.txt")
         
-        assert result['content'] == "Line 1\nLine 2"
+        assert result['content'] == ["Line 1", "Line 2"]
     
     def test_file_with_only_newlines(self, temp_project):
         """Test file with only newlines."""
@@ -742,7 +772,7 @@ class TestEdgeCases:
         
         # Verify we can load it
         result = pf.load_file(deep_path)
-        assert result['content'] == "Deep content"
+        assert result['content'] == ["Deep content"]
     
     def test_file_with_very_long_lines(self, temp_project):
         """Test handling files with very long lines."""
