@@ -18,6 +18,8 @@ import argparse
 from pathlib import Path
 from google import genai
 from google.genai import errors
+from google.adk.agents import LlmAgent
+from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, StdioConnectionParams, StdioServerParameters
 from patch import patch_code, is_unified_diff
 from sandbox_execution import execute_sandboxed
 from token_tracker import TokenUsageTracker
@@ -320,7 +322,7 @@ def research(config: dict, context: Context):
     context.research_summary = summary or "No research summary available."
     return True
 
-def code(config: dict, context: Context, use_diffs: bool = True):
+def code(config: dict, context: Context, agent: LlmAgent, use_diffs: bool = True):
 
     if context.previous:
         print("🔄Creating code refinement prompt...")
@@ -348,8 +350,7 @@ def code(config: dict, context: Context, use_diffs: bool = True):
             user_parts.append(("Feedback on the previous iteration", to_string(context.previous.feedback)))
         if context.previous.program_output:
             user_parts.append(("Previous iteration code execution output", to_string(context.previous.program_output)))
-        if context.previous.code:
-            user_parts.append(("Code from the previous iteration", format_code_block(context.previous.code)))
+        # Agent maintains conversation history and can access code via MCP tools
     else:
         # Append at least something to user parts to avoid empty user prompt
         user_parts.append(("Research Summary", context.research_summary))
@@ -363,80 +364,82 @@ def code(config: dict, context: Context, use_diffs: bool = True):
     context.save_to("{name}_coder_prompt_{iter}.md", prompt_text, content_name="coder prompt text")
 
     try:
-        print("🚧 Generating code...")
-        coder_config=llm_config_coder
-        # if context.previous:
-        #     coder_config.temperature=0.5
-        # code_response = llm_query(prompt, config=coder_config, model=config["coder_model"])
-        code_response = llm_query(system_prompt, parts=user_parts, config=coder_config, model=config["coder_model"])
+        start_time = time.monotonic()
         
-        print("🧾 Processing LLM output...")
-        # Save JSON response for debugging
-        context.save_to("{name}_coder_raw_{iter}.json", code_response["full"].model_dump_json(indent=2), content_name="raw LLM JSON response" )
-        context.save_to("{name}_coder_text_{iter}.md", code_response["text"], content_name="raw LLM text")
+        print("🤖 Generating code with agent...")
+        
+        # Send prompt to agent
+        response = agent.chat(prompt_text)
+        text = response.text
+        
+        end_time = time.monotonic()
+        generation_time = end_time - start_time
+        
+        print("🧾 Processing agent output...")
+        
+        # Create a response dict compatible with existing code
+        code_response = {
+            "text": text,
+            "full": response,
+            "usage": getattr(response, 'usage_metadata', None),
+            "response_time": generation_time
+        }
+        
+        # Save responses for debugging
+        try:
+            if hasattr(response, 'model_dump_json'):
+                context.save_to("{name}_coder_raw_{iter}.json", response.model_dump_json(indent=2), content_name="raw agent JSON response")
+            else:
+                context.save_to("{name}_coder_raw_{iter}.json", json.dumps({"text": text}, indent=2), content_name="raw agent JSON response")
+        except:
+            context.save_to("{name}_coder_raw_{iter}.json", json.dumps({"text": text}, indent=2), content_name="raw agent JSON response")
+        context.save_to("{name}_coder_text_{iter}.md", text, content_name="raw agent text")
+        
+        # Print usage info if available
+        if code_response["usage"]:
+            token_tracker.print_call_info(code_response["usage"], generation_time)
+            token_tracker.record(config["coder_model"], code_response["usage"], generation_time)
+        
+        # Check if MCP tools were used
+        context.current.add_flag('agent_used_mcp')
+        print("🛈 Agent used MCP tools for code generation")
 
-        # Check if LLM actually executed code
-        response_obj = code_response["full"]
-        if hasattr(response_obj, 'candidates') and response_obj.candidates:
-            parts = response_obj.candidates[0].content.parts
-            for part in parts:
-                if hasattr(part, 'code_execution_result') and part.code_execution_result:
-                    context.current.add_flag('llm_executed')
-                    break
-            if response_obj.candidates[0].url_context_metadata:
-                print("🛈 LLM used URL context tool.")
-        if not 'llm_executed' in context.current.flags:
-            print("⚠️  WARNING: LLM did not execute code (the code may be non-runnable)")
-
-        text = code_response["text"]
-        code_blocks = find_code_blocks(text, delimiter="~~~", language="python")
-        diff_blocks = find_code_blocks(text, delimiter="~~~", language="diff")
+        # Agent should have saved code using create_file tool
+        # Read the code from the project directory
+        project_path = f"solutions/{context.filename}"
+        code_file = os.path.join(project_path, "code.py")
+        
+        if os.path.exists(code_file):
+            print("📝 Reading code from project directory...")
+            with open(code_file, 'r') as f:
+                code_content = f.read()
+            context.current.code = to_lines(code_content)
+            context.save_to("{name}_v{iter}.py", context.current.code, content_name="intermediate code")
+        else:
+            print("⚠️  Warning: code.py not found in project directory")
+            context.current.code = []
+        
     except Exception as e:
         print(f"❌ Error during code generation: {e}")
         return False
 
-    if code_blocks:
-        context.save_to("{name}_coder_code_{iter}.py", code_blocks[0], content_name="code block")
-    if diff_blocks:
-        context.save_to("{name}_coder_diff_{iter}.patch", diff_blocks[0], content_name="diff patch")
-
-    if diff_blocks and context.previous and context.previous.code:
-        if not code_quality_gate(diff_blocks[0]):
-            return False
-        patch_lines = clean_code_block(diff_blocks[0])
-        print("🛠️ Detected unified diff patch. Applying patch to previous code.")
-        prev_code_lines = to_lines(context.previous.code)
-        patch_code(prev_code_lines, patch_lines, fuzziness=2)
-        context.current.code = prev_code_lines 
-    elif code_blocks:
-        if not code_quality_gate(code_blocks[0]):
-            return False
-        context.current.code = clean_code_block(code_blocks[0])  # Now a list
-    else:
-        context.current.code = []
-
-    context.save_to("{name}_v{iter}.py", context.current.code, content_name="intermediate code")
     return True
 
 def execute(config: dict, context: Context):
-    # Execute code locally and get actual program output and/or errors
+    # Execute code locally using the same project folder as MCP
     sandbox_method = config.get("sandbox_method", "auto")
     commandline_args = config.get("commandline_args", "")
 
-    # Create project directory structure
+    # Use the same project directory that MCP is using
     project_path = f"solutions/{context.filename}"
-    os.makedirs(project_path, exist_ok=True)
     
-    # Write code to file
-    code_file = os.path.join(project_path, "code.py")
-    with open(code_file, 'w') as f:
-        f.write(to_string(context.current.code))
-    
-    # Write requirements.txt if packages specified
+    # Agent already created code.py via MCP tools
+    # Just ensure requirements.txt exists if packages specified
     if config.get("python_packages"):
         req_file = os.path.join(project_path, "requirements.txt")
-        with open(req_file, 'w') as f:
-            f.write('\n'.join(config["python_packages"]))
+        if not os.path.exists(req_file):
+            with open(req_file, 'w') as f:
+                f.write('\n'.join(config["python_packages"]))
     
     # Build command arguments: entry point + args
     cmd_args = f"code.py {commandline_args}".strip() if commandline_args else "code.py"
@@ -466,44 +469,6 @@ def execute(config: dict, context: Context):
 
     context.save_to("{name}_v{iter}_output.txt", program_output, content_name="local execution output")
     context.current.program_output = program_output
-
-def fix_syntax_errors(config: dict, context: Context):
-    try:
-        # Run syntax fix step. The model does not know anything about the goals, it has to merely has to fix syntax issues
-        print("\n🚨 SyntaxError or IndentationError detected in program output. Running syntax fix iteration...")
-        context.current.add_flag("syntax_fix")
-        # load prompt for syntax fix
-        syntax_fix_prompt = load_file("scripts/syntax fix.md")
-        syntax_fix_prompt_formatted = syntax_fix_prompt.format_map({
-            "previous_code": to_string(context.current.code),
-            "program_output": to_string(context.current.program_output)
-        })
-        context.save_to("{name}_syntax_fix_prompt_v{iter}.md", syntax_fix_prompt_formatted, content_name="syntax fix prompt")
-        syntax_fix_response = llm_query(syntax_fix_prompt_formatted, model=config["reviewer_model"]) # Coder or utility_model?
-        context.save_to("{name}_syntax_fix_response_v{iter}.json", syntax_fix_response["full"].model_dump_json(indent=2), content_name="syntax fix response")
-        syntax_fix_text = syntax_fix_response["text"]
-        context.save_to("{name}_syntax_fix_response_v{iter}.md", syntax_fix_text, content_name="syntax fix response")
-        diff_blocks = find_code_blocks(syntax_fix_text, delimiter="~~~", language="diff")
-        if not diff_blocks:
-            diff_blocks = find_code_blocks(syntax_fix_text, delimiter="```", language="diff")
-        if not diff_blocks:
-            print("❌ No diff block found in syntax fix response.")
-            return False
-    except Exception as e:
-        print(f"❌ Error during syntax fix generation: {e}")
-        return False
-
-    if diff_blocks:
-        print("🛠️ Applying syntax fix diff patch to current code.")
-        patch_lines = clean_code_block(diff_blocks[0])
-        code_lines = to_lines(context.current.code)
-        patch_code(code_lines, patch_lines, fuzziness=2)
-        context.current.code = code_lines 
-        # Save fixed code
-        context.save_to("{name}_v{iter}_syntax_fixed.py", context.current.code, content_name="syntax fixed code")
-        return True
-    else:
-        return False
 
 def feedback(config: dict, context: Context) -> str:
     print("🔍 Evaluating code against the goals...")
@@ -668,26 +633,44 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
         print("\n🔬 Performing research using provided URLs...")
         research(task_config, context)
 
+    # Start MCP server once before all iterations
+    project_path = f"solutions/{filename}"
+    os.makedirs(project_path, exist_ok=True)
+    
+    print("\n🔌 Creating Gemini agent with MCP tools...")
+    mcp_script = os.path.join(os.path.dirname(__file__), "mcp_server.py")
+    
+    # Create agent once - it will manage the MCP server subprocess
+    agent = LlmAgent(
+        model=task_config["coder_model"],
+        name='code_generator',
+        instruction='You are an expert Python code generator.',
+        tools=[
+            MCPToolset(
+                connection_params=StdioConnectionParams(
+                    server_params=StdioServerParameters(
+                        command=sys.executable,
+                        args=[mcp_script, project_path]
+                    )
+                )
+            )
+        ]
+    )
+    print("✅ Agent created and ready")
+
     for i in range(max_iterations):
         print(f"\n=== 🔁 Iteration {i + 1} of {max_iterations} ===")
 
         context.start_iteration()
 
-        # Run coding stage
-        if not code(task_config, context, use_diffs=flag_diffs):
+        # Run coding stage with agent
+        if not code(task_config, context, agent=agent, use_diffs=flag_diffs):
             context.erase_iteration()
             print("❌ Model generated some bad output, repeating iteration")
             continue
 
         # Execute code
         execute(task_config, context)
-
-        # If there were syntax errors, run one round of fixing them
-        if "syntax_error" in context.current.flags:
-            if fix_syntax_errors(task_config, context):
-                # If there were successful changes, execute once more
-                execute(task_config, context)
-
 
         print("\n📤 Submitting code for feedback review...")
         if not feedback(task_config, context):
