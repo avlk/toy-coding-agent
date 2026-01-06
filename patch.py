@@ -2,6 +2,10 @@ import re
 import Levenshtein
 from pathlib import Path
 from enum import Enum
+import logging
+
+# Configure logger for this module
+logger = logging.getLogger(__name__)
 
 class ApplicationMode(Enum):
     """Mode for applying a hunk: modify existing file, create new file, or delete file."""
@@ -343,19 +347,19 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
     hunks_by_file = {}
     for hunk in hunk_list:
         if hunk.filename is None:
-            print(f"[WARNING] Hunk without filename: {hunk}")
+            logger.warning(f"Hunk without filename: {hunk}")
             continue
         if hunk.filename not in hunks_by_file:
             hunks_by_file[hunk.filename] = []
         hunks_by_file[hunk.filename].append(hunk)
     
-    print(f"Extracted {len(hunk_list)} hunks for {len(hunks_by_file)} files")
+    logger.info(f"Extracted {len(hunk_list)} hunks for {len(hunks_by_file)} files")
     
     all_success = True
     
     # Process each file
     for filename, file_hunks in hunks_by_file.items():
-        print(f"\nProcessing file: {filename}")
+        logger.info(f"\nProcessing file: {filename}")
         
         # Construct and validate file path
         file_path = (project_dir / filename).resolve()
@@ -364,7 +368,7 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
         try:
             file_path.relative_to(project_dir)
         except ValueError:
-            print(f"[ERROR] File path {file_path} is outside project directory {project_dir}")
+            logger.error(f"File path {file_path} is outside project directory {project_dir}")
             all_success = False
             continue
         
@@ -374,25 +378,25 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
         
         if delete_op:
             if not file_path.exists():
-                print(f"[WARNING] File {file_path} does not exist (already deleted?)")
+                logger.warning(f"File {file_path} does not exist (already deleted?)")
                 # Consider this a success - file is already gone
                 continue
             
-            print(f"[DELETE] Deleting file {file_path}")
+            logger.info(f"[DELETE] Deleting file {file_path}")
             try:
                 file_path.unlink()
-                print(f"[DELETED] {file_path}")
+                logger.info(f"[DELETED] {file_path}")
             except Exception as e:
-                print(f"[ERROR] Failed to delete {file_path}: {e}")
+                logger.error(f"Failed to delete {file_path}: {e}")
                 all_success = False
             continue
         elif create_op:
             if file_path.exists():
-                print(f"[WARNING] File {file_path} already exists (can't overwrite)")
+                logger.warning(f"File {file_path} already exists (can't overwrite)")
                 all_success = False
                 continue
 
-            print(f"[CREATE] Creating new file {file_path}")
+            logger.info(f"[CREATE] Creating new file {file_path}")
             # Ensure parent directory exists
             file_path.parent.mkdir(parents=True, exist_ok=True)
             # Start with empty file content
@@ -403,7 +407,7 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
                 with open(file_path, 'r') as f:
                     code_lines = f.read().splitlines()
             except Exception as e:
-                print(f"[ERROR] Failed to read {file_path}: {e}")
+                logger.error(f"Failed to read {file_path}: {e}")
                 all_success = False
                 continue
         
@@ -412,38 +416,38 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
         
         # Report results for this file
         if failed_hunks > 0:
-            print(f"[ERROR] Failed to apply {failed_hunks}/{len(file_hunks)} hunks for {filename}")
+            logger.error(f"Failed to apply {failed_hunks}/{len(file_hunks)} hunks for {filename}")
             all_success = False
         else:
-            print(f"[OK] Successfully applied {len(file_hunks)} hunks for {filename}")
+            logger.info(f"[OK] Successfully applied {len(file_hunks)} hunks for {filename}")
             
             # Save the modified file
             try:
                 with open(file_path, 'w') as f:
                     f.write('\n'.join(code_lines))
-                print(f"[SAVED] {file_path}")
+                logger.info(f"[SAVED] {file_path}")
             except Exception as e:
-                print(f"[ERROR] Failed to save {file_path}: {e}")
+                logger.error(f"Failed to save {file_path}: {e}")
                 all_success = False
     
     if all_success:
-        print(f"\n✓ Patch application complete. All hunks applied successfully.")
+        logger.info(f"\n✓ Patch application complete. All hunks applied successfully.")
     else:
-        print(f"\n✗ Patch application failed. Some hunks could not be applied.")
+        logger.error(f"\n✗ Patch application failed. Some hunks could not be applied.")
     
     return all_success
 
 
 def patch_code(code_lines: list[str], patch_lines: list[str], fuzziness: int = 0):
     hunk_list = extract_hunks(patch_lines)
-    print(f"Extracted {len(hunk_list)} hunks:")
+    logger.info(f"Extracted {len(hunk_list)} hunks:")
     
     failed_hunks = apply_hunks_to_code(code_lines, hunk_list, fuzziness)
     
     if failed_hunks > 0:
-        print(f"Patch application failed. {failed_hunks}/{len(hunk_list)} hunks failed to apply.")
+        logger.error(f"Patch application failed. {failed_hunks}/{len(hunk_list)} hunks failed to apply.")
     else:
-        print(f"Patch application complete. All {len(hunk_list)} hunks applied successfully.")
+        logger.info(f"Patch application complete. All {len(hunk_list)} hunks applied successfully.")
     return failed_hunks == 0
 
 

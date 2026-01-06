@@ -21,9 +21,13 @@ Date: December 28, 2025
 
 import os
 import re
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple, Any
 from fastmcp.exceptions import ToolError
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 
 class ProjectFolderError(ToolError):
@@ -338,6 +342,29 @@ class ProjectFolder:
             # Convert list to string if needed
             if isinstance(content, list):
                 content = '\n'.join(content)
+            
+            # Handle case where LLM sends Python string literal representation
+            # Check if content contains the pattern \n\ (backslash-n-backslash) indicating escaped newlines
+            if '\\n\\' in content:
+                original_length = len(content)
+                escaped_newline_count = content.count('\\n\\')
+                
+                logger.warning(
+                    f"Detected escaped newlines in content for {file_path}. "
+                    f"Content length: {original_length}, Escaped newlines: {escaped_newline_count}. "
+                    f"Auto-fixing by converting \\n\\ to actual newlines."
+                )
+                
+                # Content appears to be a Python string literal - unescape it
+                # Split by the escaped newline pattern and rejoin with actual newlines
+                content = content.replace('\\n\\', '\n')
+                # Clean up any trailing backslash at the very end
+                content = content.rstrip('\\')
+                
+                logger.info(
+                    f"Fixed content for {file_path}. New length: {len(content)}, "
+                    f"Actual lines: {content.count(chr(10))}"
+                )
             
             # Write the file
             with open(full_path, 'w', encoding='utf-8') as f:
