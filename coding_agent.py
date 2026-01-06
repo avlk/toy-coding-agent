@@ -15,11 +15,17 @@ import time
 import subprocess
 import tempfile
 import argparse
+import asyncio
+import logging
+import uuid
 from pathlib import Path
 from google import genai
-from google.genai import errors
+from google.genai import errors, types
+from google.adk.sessions import InMemorySessionService
 from google.adk.agents import LlmAgent
-from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, StdioConnectionParams, StdioServerParameters
+from google.adk.runners import Runner
+from google.adk.planners import PlanReActPlanner
+from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, StdioConnectionParams, StdioServerParameters
 from patch import patch_code, is_unified_diff
 from sandbox_execution import execute_sandboxed
 from token_tracker import TokenUsageTracker
@@ -30,13 +36,19 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY environment variable not set")
 
+
+APP_NAME = "coding_agent"
+USER_ID = "1234"
+# Generate unique session ID for each run to avoid context pollution
+SESSION_ID = f"session_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+
 default_llm_model = "gemini-2.5-flash"
 print(f"📡 Initializing Gemini LLM ...")
 llm = genai.Client(api_key=api_key)
 
 class Iteration:
     def __init__(self):
-        self.code = None
+        self.code = {}  # Dict of {filepath: content}
         self.feedback = None
         self.flags = set()
         self.program_output = None
@@ -322,105 +334,180 @@ def research(config: dict, context: Context):
     context.research_summary = summary or "No research summary available."
     return True
 
-def code(config: dict, context: Context, agent: LlmAgent, use_diffs: bool = True):
+def code(config: dict, context: Context, agent_runner, loop=None):
 
     if context.previous:
-        print("🔄Creating code refinement prompt...")
-        script_path = "scripts/coder fix.md"
-    else:
-        print("📝 Constructing code generation prompt...")
-        script_path = "scripts/coder create.md"
-
-    script = load_file(script_path)
-    if use_diffs:
-        system_prompt = to_string(select_variant(to_lines(script), "a"))
-    else:
-        system_prompt = to_string(select_variant(to_lines(script), "b"))
-
-    system_parts = [
-        ("Use Case", context.use_case),
-        ("Goals", context.goals),
-    ]
-    user_parts = [
-    ]
-
-    if context.previous:
-        system_parts.append(("Research Summary", context.research_summary))
-        if context.previous.feedback:
-            user_parts.append(("Feedback on the previous iteration", to_string(context.previous.feedback)))
+        prompt = load_file("scripts/coder step.md")
+        print("🔄 Preparing refinement prompt...")
+        
+        # Build multi-part message with feedback and execution results
+        parts = [("Next step instructions", prompt)]
+        
         if context.previous.program_output:
-            user_parts.append(("Previous iteration code execution output", to_string(context.previous.program_output)))
-        # Agent maintains conversation history and can access code via MCP tools
+            parts.append(("Previous Execution Results", to_string(context.previous.program_output)))
+        if context.previous.feedback:
+            parts.append(("Code Review Feedback", to_string(context.previous.feedback)))
     else:
-        # Append at least something to user parts to avoid empty user prompt
-        user_parts.append(("Research Summary", context.research_summary))
+        print("📝 Starting initial code generation...")
+        # For first iteration, include use case, goals, and optionally research
+        parts = [("Task", "Start by creating the initial code implementation.")]
+        # Add research summary if it exists and is not the default placeholder
+        if context.research_summary:
+            parts.append(("Research Summary", context.research_summary))
 
-    for title, content in system_parts:
-        system_prompt += f"\n\n# {title}\n{content}"
-
-    prompt_text = system_prompt
-    for title, content in user_parts:
-        prompt_text += f"\n\n# {title}\n{content}"
+    # Format as multi-part prompt
+    prompt_text = ""
+    for i, (title, content) in enumerate(parts):
+        if i > 0:
+            prompt_text += "\n\n"
+        prompt_text += f"# {title}\n{content}"
+    
     context.save_to("{name}_coder_prompt_{iter}.md", prompt_text, content_name="coder prompt text")
 
     try:
         start_time = time.monotonic()
         
         print("🤖 Generating code with agent...")
+    
+        formatted_parts = [types.Part.from_text(text=f"## {title}\n{content}") for title, content in parts]
+
         
-        # Send prompt to agent
-        response = agent.chat(prompt_text)
-        text = response.text
+        # Run in the persistent event loop to reuse MCP connection
+        if loop and loop.is_running():
+            # If loop is already running, schedule the coroutine
+            import concurrent.futures
+            future = asyncio.run_coroutine_threadsafe(
+                agent_runner.run_async(user_id=USER_ID, session_id=SESSION_ID, new_message=types.Content(role='user', parts=formatted_parts)),
+                loop
+            )
+            events_iterator = future.result()
+        else:
+            # Use the existing loop
+            async def run_agent():
+                events = []
+                async for event in agent_runner.run_async(user_id=USER_ID, session_id=SESSION_ID, new_message=types.Content(role='user', parts=formatted_parts)):
+                    events.append(event)
+                return events
+            
+            if loop:
+                events_list = loop.run_until_complete(run_agent())
+            else:
+                events_list = asyncio.run(run_agent())
+            events_iterator = iter(events_list)
+
+        responses = []
+        final_answer = None
+        for event in events_iterator:
+            # print(f"\nDEBUG EVENT: {event}\n")
+            if event.content:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        responses.append(part.text)
+                        print(f"🤖 {part.text}", flush=True)
+                    if hasattr(part, 'function_call') and part.function_call:
+                        print(f"🤖 Function call: {part.function_call.name}", flush=True)
+                    if hasattr(part, 'function_response') and part.function_response:
+                        print(f"🤖 Function response: Error={part.function_response.response['isError']}", flush=True)
+            if event.usage_metadata:
+                token_tracker.print_call_info(event.usage_metadata, 0)  # No time info here
+                token_tracker.record(config["coder_model"], event.usage_metadata, 0)
+            if event.is_final_response():
+                final_answer = responses[-1] if responses else ""
+                print("\n🟢 FINAL ANSWER\n", final_answer, "\n")
         
         end_time = time.monotonic()
         generation_time = end_time - start_time
         
         print("🧾 Processing agent output...")
-        
         # Create a response dict compatible with existing code
         code_response = {
-            "text": text,
-            "full": response,
-            "usage": getattr(response, 'usage_metadata', None),
+            "text": final_answer,
+            "full": responses,
+            # "usage": getattr(response, 'usage_metadata', None),
             "response_time": generation_time
         }
         
         # Save responses for debugging
-        try:
-            if hasattr(response, 'model_dump_json'):
-                context.save_to("{name}_coder_raw_{iter}.json", response.model_dump_json(indent=2), content_name="raw agent JSON response")
-            else:
-                context.save_to("{name}_coder_raw_{iter}.json", json.dumps({"text": text}, indent=2), content_name="raw agent JSON response")
-        except:
-            context.save_to("{name}_coder_raw_{iter}.json", json.dumps({"text": text}, indent=2), content_name="raw agent JSON response")
-        context.save_to("{name}_coder_text_{iter}.md", text, content_name="raw agent text")
+        # try:
+        #     if hasattr(response, 'model_dump_json'):
+        #         context.save_to("{name}_coder_raw_{iter}.json", response.model_dump_json(indent=2), content_name="raw agent JSON response")
+        #     elif hasattr(response, '__dict__'):
+        #         context.save_to("{name}_coder_raw_{iter}.json", json.dumps(response.__dict__, indent=2, default=str), content_name="raw agent JSON response")
+        #     else:
+        #         context.save_to("{name}_coder_raw_{iter}.json", json.dumps({"text": text, "response_type": str(type(response))}, indent=2), content_name="raw agent JSON response")
+        # except Exception as e:
+        #     print(f"⚠️  Could not save raw response JSON: {e}")
+        #     context.save_to("{name}_coder_raw_{iter}.json", json.dumps({"text": text, "error": str(e)}, indent=2), content_name="raw agent JSON response")
+        context.save_to("{name}_coder_text_{iter}.md", final_answer, content_name="raw agent text")
         
         # Print usage info if available
-        if code_response["usage"]:
-            token_tracker.print_call_info(code_response["usage"], generation_time)
-            token_tracker.record(config["coder_model"], code_response["usage"], generation_time)
+        # if code_response["usage"]:
+        #    token_tracker.print_call_info(code_response["usage"], generation_time)
+        #    token_tracker.record(config["coder_model"], code_response["usage"], generation_time)
         
         # Check if MCP tools were used
         context.current.add_flag('agent_used_mcp')
         print("🛈 Agent used MCP tools for code generation")
 
         # Agent should have saved code using create_file tool
-        # Read the code from the project directory
+        # Read all Python files from the project directory
         project_path = f"solutions/{context.filename}"
-        code_file = os.path.join(project_path, "code.py")
         
-        if os.path.exists(code_file):
-            print("📝 Reading code from project directory...")
-            with open(code_file, 'r') as f:
-                code_content = f.read()
-            context.current.code = to_lines(code_content)
-            context.save_to("{name}_v{iter}.py", context.current.code, content_name="intermediate code")
+        # Directories to skip when reading files
+        skip_dirs = {'.venv', '__pycache__', '.git', 'venv', 'env', '.tox', '.pytest_cache'}
+        
+        print("📝 Reading all files from project directory...")
+        context.current.code = {}
+        
+        if os.path.exists(project_path):
+            for root, dirs, files in os.walk(project_path):
+                # Filter out directories we want to skip
+                dirs[:] = [d for d in dirs if d not in skip_dirs]
+                
+                for file in files:
+                    if file.endswith('.py'):
+                        file_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(file_path, project_path)
+                        with open(file_path, 'r') as f:
+                            context.current.code[rel_path] = f.read()
+                        print(f"   📄 {rel_path}")
         else:
-            print("⚠️  Warning: code.py not found in project directory")
-            context.current.code = []
-        
+            print("⚠️  Warning: project directory not found")
+    except errors.ClientError as e:
+        delay = 15 
+        print(f"⚠️  Server error during code generation: {e.code} - {e.status}")
+        print(f"❌ Message: {e.message}")
+        # print(f"❌ Details: {e.details}")
+        # Example e.details:
+        # {
+        #     'error': {
+        #         'code': 429, 
+        #         'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash-lite\nPlease retry in 52.30073862s.', 
+        #         'status': 'RESOURCE_EXHAUSTED', 
+        #         'details': [
+        #             {'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]},
+        #             {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'model': 'gemini-2.5-flash-lite', 'location': 'global'}, 'quotaValue': '20'}]}, 
+        #             {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '52s'}
+        #         ]
+        #     }
+        # }
+
+        if e.code == 429:
+            for d in e.details["error"].get('details', []): 
+                if '@type' in d and d['@type'] == 'type.googleapis.com/google.rpc.RetryInfo':
+                    retry_delay = d.get('retryDelay', '15s')
+                    delay_match = re.match(r'(\d+)(\.\d+)?s', retry_delay)
+                    if delay_match:
+                        delay = int(float(delay_match.group(1) + (delay_match.group(2) or '')))
+        # add random jitter of up to 5 seconds
+        jitter = random.randint(1, 5)
+        print(f"🔄 Retrying after {delay}s + {jitter}s...")
+        time.sleep(delay + jitter)
+        return False
     except Exception as e:
         print(f"❌ Error during code generation: {e}")
+        # Print error class name
+        print(f"❌ Exception type: {type(e).__name__}")
         return False
 
     return True
@@ -485,7 +572,12 @@ def feedback(config: dict, context: Context) -> str:
     ]    
 
     if context.current.code:
-        user_parts.append(("Code from this iteration", format_code_block(context.current.code)))
+        # Format all files with their names
+        code_text = ""
+        for filepath, content in sorted(context.current.code.items()):
+            code_text += f"\n\n### File: {filepath}\n\n"
+            code_text += f"```python\n{content}\n```"
+        user_parts.append(("Code from this iteration", code_text))
     if context.current.program_output:
         user_parts.append(("Code execution output", to_string(context.current.program_output)))
     if context.previous and context.previous.feedback:
@@ -544,6 +636,29 @@ def goals_met(config: dict, context: Context) -> tuple[bool, int]:
 
     return (False, 0)
 
+def restore_iteration_files(context: Context, project_path: str):
+    """
+    Restores files from the current iteration context to the project directory.
+    Deletes all existing Python files first.
+    """
+    # Delete all existing Python files
+    if os.path.exists(project_path):
+        for root, dirs, files in os.walk(project_path):
+            for file in files:
+                if file.endswith('.py'):
+                    file_path = os.path.join(root, file)
+                    os.remove(file_path)
+                    print(f"   🗑️  Deleted {os.path.relpath(file_path, project_path)}")
+    
+    # Restore files from context
+    os.makedirs(project_path, exist_ok=True)
+    for rel_path, content in context.current.code.items():
+        file_path = os.path.join(project_path, rel_path)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, 'w') as f:
+            f.write(content)
+        print(f"   ✅ Restored {rel_path}")
+
 def progress_check(context: Context, reset_threshold: int) -> int:
     """ 
     Checks if there is progress in scores.
@@ -563,29 +678,32 @@ def progress_check(context: Context, reset_threshold: int) -> int:
     return None
 
 
-def format_final_code(config: dict, context: Context, token_tracker: TokenUsageTracker) -> list:
+def create_readme(config: dict, context: Context, token_tracker: TokenUsageTracker, project_path: str) -> str:
     """
-    Adds a comment header to the code.
+    Creates a README.md file in the project directory with metadata.
     """
-    comment = []
-    comment.append(f"# Generated by AI Code Generation Agent")
-    comment.append(f"# This Python program implements the following use case:")
+    readme_content = []
+    readme_content.append(f"# Generated by AI Code Generation Agent\n")
+    readme_content.append(f"This Python program implements the following use case:\n")
     use_case_lines = to_lines(context.use_case)
     for line in use_case_lines:
-        comment.append(f"# {line.strip()}")
-    comment.append(f"# It shall meet the following goals:")
+        readme_content.append(f"- {line.strip()}\n")
+    readme_content.append(f"It shall meet the following goals:\n")
     goals_lines = to_lines(context.goals)
     for line in goals_lines:
-        comment.append(f"# {line.strip()}")
-    comment.append(f"# Models used: coder={config['coder_model']}, reviewer={config['reviewer_model']}, utility={config['utility_model']}")
-    comment.append(f"# It required {len(context.iterations) + 1} coding rounds to complete.")
-    comment.append(f"# Token usage summary:")
+        readme_content.append(f"- {line.strip()}\n")
+    readme_content.append(f"Models used: coder={config['coder_model']}, reviewer={config['reviewer_model']}, utility={config['utility_model']}\n")
+    readme_content.append(f"It required {len(context.iterations) + 1} coding rounds to complete.\n")
+    readme_content.append(f"Token usage summary:\n")
     for line in token_tracker.summary():
-        comment.append(f"# {line}")
-    comment.append("")
+        readme_content.append(f"{line}\n")
     
-    code_lines = to_lines(context.current.code)
-    return comment + code_lines
+    readme_path = os.path.join(project_path, "README.md")
+    with open(readme_path, 'w') as f:
+        f.write(''.join(readme_content))
+    
+    print(f"📝 Created {readme_path}")
+    return project_path
 
 def create_filename(basename: str) -> str:
     # Create a filename by appending a random suffix to the basename
@@ -593,7 +711,7 @@ def create_filename(basename: str) -> str:
     return f"{basename}_{random_suffix}"
 
 # --- Main Agent Function ---
-def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goals: bool = True, flag_diffs: bool = True, reset_threshold: int = 3) -> str:
+def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goals: bool = True, reset_threshold: int = 3) -> str:
     max_iterations = task_config["max_rounds"]
     
     print("\n🎯 Use Case:")
@@ -640,13 +758,31 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
     print("\n🔌 Creating Gemini agent with MCP tools...")
     mcp_script = os.path.join(os.path.dirname(__file__), "mcp_server.py")
     
+    # Build system instruction with context
+    system_instruction_template = load_file("scripts/coder init.md")
+    system_instruction = system_instruction_template.format(
+        use_case=context.use_case,
+        goals=context.goals
+    )
+
+    # Suppress verbose logging from base_authenticated_tool (it will cry that there is no auth config)
+    logging.getLogger("google_adk.google.adk.tools.base_authenticated_tool").setLevel(logging.ERROR)
+    
+    # Create generation config for the coder agent to limit token usage
+    coder_generation_config = genai.types.GenerateContentConfig(
+        temperature=0.3,
+        max_output_tokens=10000,  # Limit output tokens per iteration
+    )
+    
     # Create agent once - it will manage the MCP server subprocess
-    agent = LlmAgent(
+    coding_agent = LlmAgent(
         model=task_config["coder_model"],
         name='code_generator',
-        instruction='You are an expert Python code generator.',
+        instruction=system_instruction,
+        generate_content_config=coder_generation_config,
+        planner=PlanReActPlanner(),
         tools=[
-            MCPToolset(
+            McpToolset(
                 connection_params=StdioConnectionParams(
                     server_params=StdioServerParameters(
                         command=sys.executable,
@@ -656,69 +792,76 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
             )
         ]
     )
+    coding_session_service = InMemorySessionService()
+    coding_session = asyncio.run(coding_session_service.create_session(app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID))
+    coding_agent_runner = Runner(agent=coding_agent, app_name=APP_NAME, session_service=coding_session_service)
+
     print("✅ Agent created and ready")
 
-    for i in range(max_iterations):
-        print(f"\n=== 🔁 Iteration {i + 1} of {max_iterations} ===")
+    # Create a persistent event loop for all iterations to avoid MCP connection recreation
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        for i in range(max_iterations):
+            print(f"\n=== 🔁 Iteration {i + 1} of {max_iterations} ===")
 
-        context.start_iteration()
+            context.start_iteration()
 
-        # Run coding stage with agent
-        if not code(task_config, context, agent=agent, use_diffs=flag_diffs):
-            context.erase_iteration()
-            print("❌ Model generated some bad output, repeating iteration")
-            continue
+            # Run coding stage with agent (pass loop to reuse it)
+            if not code(task_config, context, agent_runner=coding_agent_runner, loop=loop):
+                context.erase_iteration()
+                print("❌ Model generated some bad output, repeating iteration")
+                continue
 
-        # Execute code
-        execute(task_config, context)
+            # Execute code
+            execute(task_config, context)
 
-        print("\n📤 Submitting code for feedback review...")
-        if not feedback(task_config, context):
-            print("❌ No feedback received, repeating iteration...")
-            context.erase_iteration()
-            continue
+            print("\n📤 Submitting code for feedback review...")
+            if not feedback(task_config, context):
+                print("❌ No feedback received, repeating iteration...")
+                context.erase_iteration()
+                continue
 
-        done_flag, score = goals_met(task_config, context)
-        context.current.score = score
+            done_flag, score = goals_met(task_config, context)
+            context.current.score = score
 
-        if done_flag:
-            print("✅ LLM confirms goals are met. Stopping iteration.")
-            break
+            if done_flag:
+                print("✅ LLM confirms goals are met. Stopping iteration.")
+                break
 
-        print("🛠️ Goals not fully met. Preparing for next iteration...")
-        # Create scores from context
-        scores = [x.score for x in context.iterations]
-        scores.append(context.current.score)
-        print(f"📊 Completion score progression: {scores}")
+            print("🛠️ Goals not fully met. Preparing for next iteration...")
+            # Create scores from context
+            scores = [x.score for x in context.iterations]
+            scores.append(context.current.score)
+            print(f"📊 Completion score progression: {scores}")
 
-        if reset_threshold > 0:
-            return_to_iteration = progress_check(context, reset_threshold)
-            if return_to_iteration is not None:
-                context.trim_iterations(return_to_iteration+1)
-                if "restarted_from_no_progress" not in context.current.flags:
-                    print(f"🔄 No progress detected. Resetting to iteration {return_to_iteration + 1} and continuing from there.")
-                    context.current.add_flag("restarted_from_no_progress")
-                else:
-                    print("⚠️  No progress detected again after restart. Restarting from step 1.")
-                    context.trim_iterations(0)
+            if reset_threshold > 0:
+                return_to_iteration = progress_check(context, reset_threshold)
+                if return_to_iteration is not None:
+                    context.trim_iterations(return_to_iteration+1)
+                    if "restarted_from_no_progress" not in context.current.flags:
+                        print(f"🔄 No progress detected. Resetting to iteration {return_to_iteration + 1} and continuing from there.")
+                        context.current.add_flag("restarted_from_no_progress")
+                    else:
+                        print("⚠️  No progress detected again after restart. Restarting from step 1.")
+                        context.trim_iterations(0)
+                    
+                    # Restore files from the iteration we're rolling back to
+                    print(f"📁 Restoring files from iteration {return_to_iteration + 1}...")
+                    restore_iteration_files(context, project_path)
+    finally:
+        # Close the event loop
+        loop.close()
+        print("🔌 Closed event loop and MCP connections")
 
     # Print token usage summary
     token_tracker.print_summary()
 
-    final_code = format_final_code(task_config, context, token_tracker)
-    code_filename = f"{filename}.py"
-    return save_to_file(code_filename, final_code, content_name="final code")
-
-def run_test():
-    query = "Fetch this URL https://en.wikipedia.org/wiki/Code_128 and create a table matching ASCII codes to code sequences for the characters used in Code 128 barcode standard."
-    response = llm_query(query, model="gemini-2.5-flash-lite", config=llm_config_coder)
-    print("Response:")
-    print(response["text"])
-    response_obj = response["full"]
-    if hasattr(response_obj, 'candidates') and response_obj.candidates:
-        if response_obj.candidates[0].url_context_metadata:
-            print("🛈 LLM used URL context tool.")
-
+    # Create README.md in the project folder
+    final_project_path = create_readme(task_config, context, token_tracker, project_path)
+    print(f"\n✅ Code generation complete. Project saved to: {final_project_path}")
+    return final_project_path
 
 # --- CLI Test Run ---
 if __name__ == "__main__":
@@ -731,14 +874,10 @@ if __name__ == "__main__":
                         help="Refine use case and goals before starting (default)")
     parser.add_argument("--no-refine-goals", dest="refine_goals", action="store_false",
                         help="Skip goals refinement, use original goals as-is")
-    parser.add_argument("--diffs", dest="diffs", action="store_true", 
-                        help="Use unified diffs for coder output (default)")
-    parser.add_argument("--no-diffs", dest="diffs", action="store_false",
-                        help="Do not use unified diffs for coder output")
     parser.add_argument("--reset", type=int, help="Number of unsuccessful operations before resetting the the last successful iteration")
     parser.add_argument("--no-reset", dest="reset", action="store_const", const=0,
                         help="Disable resetting on no progress")
-    parser.set_defaults(refine_goals=True, diffs=True)
+    parser.set_defaults(refine_goals=True)
     parser.set_defaults(reset=3)
     args = parser.parse_args()
     config_name = args.config_name
@@ -752,5 +891,4 @@ if __name__ == "__main__":
     
     use_case_input = load_file(f"tasks/{config_name}/hl_spec.md")
     goals_input = load_file(f"tasks/{config_name}/ac.md")
-    run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals, flag_diffs=args.diffs, reset_threshold=args.reset)
-    # test = run_test()
+    run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals, reset_threshold=args.reset)

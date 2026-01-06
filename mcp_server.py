@@ -28,6 +28,18 @@ from sandbox_execution import execute_sandboxed
 from pathlib import Path
 from typing import Optional
 import json
+import logging
+
+# Configure logging for the MCP server and all imported modules
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('./solutions/mcp_server_debug.log'),
+        logging.StreamHandler()  # Also output to console if visible
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 def create_file_ops_server(project_path: str, server_name: str = "file-operations", sandbox_method: str = "auto") -> FastMCP:
@@ -62,6 +74,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         Returns:
             List of file metadata dictionaries (path, size_bytes, size_lines, mtime)
         """
+        logger.info(f"list_files(pattern={pattern!r}) called")
         return pf.list_files(pattern=pattern)
     
     # Expose load_file as MCP tool
@@ -79,6 +92,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             - content: List of lines (line endings removed)
             - metadata: File metadata (path, size_bytes, size_lines, mtime)
         """
+        logger.info(f"load_file({file_path!r}) called")
         return pf.load_file(file_path)
     
     # Expose create_file as MCP tool
@@ -97,6 +111,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         Returns:
             Dictionary with file metadata (path, size_bytes, size_lines, mtime)
         """
+        logger.info(f"create_file({file_path!r}, overwrite={overwrite}) called")
         return pf.create_file(file_path, content, overwrite=overwrite)
     
     # Expose remove_file as MCP tool
@@ -111,6 +126,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         Returns:
             Path of removed file
         """
+        logger.info(f"remove_file({file_path!r}) called")
         return pf.remove_file(file_path)
     
     # Expose get_line_range as MCP tool
@@ -127,6 +143,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         Returns:
             Dictionary with the requested lines and metadata
         """
+        logger.info(f"get_line_range({file_path!r}, start_line={start_line}, end_line={end_line}) called")
         return pf.get_line_range(file_path, start_line, end_line)
     
     # Expose search_files as MCP tool
@@ -150,6 +167,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         Returns:
             List of matches containing file, line_number, and line content
         """
+        logger.info(f"search_files(pattern={pattern!r}, is_regex={is_regex}, case_sensitive={case_sensitive}, file_pattern={file_pattern!r}) called")
         return pf.search_files(
             pattern=pattern,
             is_regex=is_regex,
@@ -165,10 +183,11 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Args:
             name: Name of the class, method, or function to find
-            def_type: Type of definition to find: 'class', 'def', or None for both
+            def_type: Type of definition to find: 'class', 'def', 'method', or None for any
                      Use 'class' to find only classes
                      Use 'def' to find only functions/methods
-                     Use None (default) to find both
+                     Use 'method' to find only methods within classes
+                     Use None (default) to find any type
         
         Returns:
             List of definitions containing:
@@ -178,25 +197,28 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             - start_line and end_line: location in file
             - text: full source code of the definition
         """
+        logger.info(f"find_python_definition(name={name!r}, def_type={def_type!r}) called")
         return pf.find_python_definition(name=name, def_type=def_type)
     
     # Expose patch_project as MCP tool
     @mcp.tool()
-    def apply_patch(patch_content: str, fuzziness: int = 0) -> dict:
+    def apply_patch(patch_content: str) -> dict:
         """
-        Apply a unified diff patch to files in the project.
+        Apply a unified diff patch to modify, create, or delete files in the project.
         
-        This tool can:
-        - Modify existing files
-        - Create new files (when patch shows --- /dev/null)
-        - Delete files (when patch shows +++ /dev/null)
+        IMPORTANT: This tool ONLY accepts patch_content parameter. Do not pass any other parameters.
+        
+        This tool automatically handles:
+        - Modifying existing files (standard patch operation)
+        - Creating new files (when patch shows --- /dev/null)
+        - Deleting files (when patch shows +++ /dev/null)
         
         The patch must be in unified diff format with file markers (---, +++).
         Multiple files can be patched in a single operation.
         
         Args:
-            patch_content: The unified diff patch as a string
-                          Should include --- and +++ markers for each file
+            patch_content: The ONLY parameter - unified diff patch as a string.
+                          Must include --- and +++ markers for each file.
                           Example:
                           --- a/file.py
                           +++ b/file.py
@@ -205,27 +227,30 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                           -old line 2
                           +new line 2
                            line 3
-            fuzziness: Level of fuzzy matching (0-2, default: 0)
-                      0 = exact match required
-                      1 = ignore whitespace and comments
-                      2 = allow small character differences (Levenshtein distance <= 3)
         
         Returns:
             Dictionary with:
             - success: True if all hunks applied successfully
             - message: Summary of the operation
-            - details: Information about processed files and hunks
+            - project_path: Path to the project
+            
+        Note: This is different from create_file. Use apply_patch for modifications via diff format.
         """
         try:
             patch_lines = patch_content.splitlines()
             project_dir = Path(pf.project_path)
             
+            logger.info(f"Applying patch to project at {project_dir}")
+            logger.debug(f"Patch content: {patch_content[:500]}...")  # First 500 chars
+            
             # Apply patch and capture result
-            success = patch_project(project_dir, patch_lines, fuzziness=fuzziness)
+            success = patch_project(project_dir, patch_lines, fuzziness=2)
             
             if not success:
+                logger.error("Patch application failed")
                 raise ToolError("Patch application failed")
             
+            logger.info("Patch applied successfully")
             return {
                 "success": True,
                 "message": "Patch applied successfully",
@@ -267,6 +292,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             ├── .venv/            # auto-created if doesn't exist
             └── requirements.txt  # optional, auto-installed if present
         """
+        logger.info(f"execute_project(cmd_args={cmd_args!r}, timeout={timeout}) called")
         try:
             result = execute_sandboxed(
                 project=str(pf.project_path),
@@ -304,7 +330,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--transport",
         choices=["http", "stdio"],
-        default="http",
+        default="stdio",
         help="Transport mode (default: http)"
     )
     parser.add_argument(
