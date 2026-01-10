@@ -9,14 +9,15 @@ import shutil
 import sys
 
 
-def _make_result(success: bool, stdout: str, stderr: str, exit_code: int, method: str) -> dict:
+def _make_result(success: bool, stdout: str, stderr: str, exit_code: int, method: str, sandbox_error: bool = False) -> dict:
     """Helper function to create consistent result dictionaries."""
     return {
         'success': success,
         'stdout': stdout,
         'stderr': stderr,
         'exit_code': exit_code,
-        'method': method
+        'method': method,
+        'sandbox_error': sandbox_error
     }
 
 
@@ -77,11 +78,11 @@ class FirejailMethod:
             return _make_result(result.returncode == 0, result.stdout, result.stderr, result.returncode, 'firejail')
         
         except FileNotFoundError:
-            return _make_result(False, '', 'firejail not found. Install with: sudo apt-get install firejail', -1, 'firejail')
+            return _make_result(False, '', 'firejail not found. Install with: sudo apt-get install firejail', -1, 'firejail', sandbox_error=True)
         except subprocess.TimeoutExpired:
             return _make_result(False, '', f'Execution timeout after {timeout} seconds', -1, 'firejail')
         except Exception as e:
-            return _make_result(False, '', f'Execution error: {str(e)}', -1, 'firejail')
+            return _make_result(False, '', f'Execution error: {str(e)}', -1, 'firejail', sandbox_error=True)
 
 
 class DockerMethod:
@@ -141,11 +142,11 @@ class DockerMethod:
             return _make_result(result.returncode == 0, result.stdout, result.stderr, result.returncode, 'docker')
         
         except FileNotFoundError:
-            return _make_result(False, '', 'docker not found. Install Docker Desktop or Docker Engine', -1, 'docker')
+            return _make_result(False, '', 'docker not found. Install Docker Desktop or Docker Engine', -1, 'docker', sandbox_error=True)
         except subprocess.TimeoutExpired:
             return _make_result(False, '', f'Execution timeout after {timeout} seconds', -1, 'docker')
         except Exception as e:
-            return _make_result(False, '', f'Execution error: {str(e)}', -1, 'docker')
+            return _make_result(False, '', f'Execution error: {str(e)}', -1, 'docker', sandbox_error=True)
 
 
 class BubblewrapMethod:
@@ -185,11 +186,11 @@ class BubblewrapMethod:
             return _make_result(result.returncode == 0, result.stdout, result.stderr, result.returncode, 'bubblewrap')
         
         except FileNotFoundError:
-            return _make_result(False, '', 'bubblewrap not found. Install with: sudo apt-get install bubblewrap', -1, 'bubblewrap')
+            return _make_result(False, '', 'bubblewrap not found. Install with: sudo apt-get install bubblewrap', -1, 'bubblewrap', sandbox_error=True)
         except subprocess.TimeoutExpired:
             return _make_result(False, '', f'Execution timeout after {timeout} seconds', -1, 'bubblewrap')
         except Exception as e:
-            return _make_result(False, '', f'Execution error: {str(e)}', -1, 'bubblewrap')
+            return _make_result(False, '', f'Execution error: {str(e)}', -1, 'bubblewrap', sandbox_error=True)
 
 
 class SubprocessMethod:
@@ -218,7 +219,7 @@ class SubprocessMethod:
         except subprocess.TimeoutExpired:
             return _make_result(False, '', f'Execution timeout after {timeout} seconds', -1, 'subprocess')
         except Exception as e:
-            return _make_result(False, '', f'Execution error: {str(e)}', -1, 'subprocess')
+            return _make_result(False, '', f'Execution error: {str(e)}', -1, 'subprocess', sandbox_error=True)
 
 
 # Registry of all available sandbox methods
@@ -312,53 +313,57 @@ def execute_sandboxed(
     
     # Validate inputs
     if not project:
-        return _make_result(False, '', 'project argument cannot be empty', -1, method)
+        return _make_result(False, '', 'project argument cannot be empty', -1, method, sandbox_error=True)
     if not cmd_args:
-        return _make_result(False, '', 'cmd_args argument cannot be empty', -1, method)
+        return _make_result(False, '', 'cmd_args argument cannot be empty', -1, method, sandbox_error=True)
     
     # Common setup - do once for all methods
     project_path = os.path.abspath(project)
     if not os.path.exists(project_path):
-        return _make_result(False, '', f'Project directory not found: {project_path}', -1, method)
+        return _make_result(False, '', f'Project directory not found: {project_path}', -1, method, sandbox_error=True)
     
     try:
         # Parse cmd_args
         parts = cmd_args.split()
         if not parts:
-            return _make_result(False, '', 'cmd_args cannot be empty after parsing', -1, method)
+            return _make_result(False, '', 'cmd_args cannot be empty after parsing', -1, method, sandbox_error=True)
         
         entry_point = parts[0]
         args_list = parts[1:]
         
         entry_file = os.path.join(project_path, entry_point)
         if not os.path.exists(entry_file):
-            return _make_result(False, '', f'Entry point not found: {entry_file}', -1, method)
+            return _make_result(False, '', f'Entry point not found: {entry_file}', -1, method, sandbox_error=True)
     except Exception as e:
-        return _make_result(False, '', f'Setup error: {str(e)}', -1, method)
+        return _make_result(False, '', f'Setup error: {str(e)}', -1, method, sandbox_error=True)
     
     # Dispatch to specific method using registry
     if method in SANDBOX_METHODS:
         return SANDBOX_METHODS[method].execute(project_path, entry_file, args_list, timeout)
     elif method == 'auto':
         # Try methods in order until one works
-        last_error = None
+        sandbox_errors = []
         for method_class in AUTO_METHODS:
             if not method_class.is_available():
                 continue
             print(f"Trying sandbox method: {method_class.name}")
             
             result = method_class.execute(project_path, entry_file, args_list, timeout)
-            # If successful, return immediately
-            if result['success']:
+            
+            # Check if sandbox itself failed or if program executed (successfully or not)
+            if result.get('sandbox_error', False):
+                # Sandbox method failed - try next method
+                sandbox_errors.append(f"{method_class.name}: {result['stderr']}")
+                print(f"  Sandbox failed: {result['stderr'][:100]}...")
+            else:
+                # Sandbox worked! Return the result (even if program failed with non-zero exit)
                 return result
-            # If failed, store error and try next method
-            last_error = result['stderr']
-            print(f"  Failed: {last_error[:100]}...")
         
-        # Return error if no sandbox methods succeeded
-        error_msg = 'No available sandbox methods found on the system.'
-        if last_error:
-            error_msg = f'All sandbox methods failed. Last error: {last_error}'
-        return _make_result(False, '', error_msg, -1, 'auto')
+        # No sandbox method succeeded in running
+        if not sandbox_errors:
+            error_msg = 'No available sandbox methods found on the system.'
+        else:
+            error_msg = f'All sandbox methods failed to initialize:\n' + '\n'.join(f'  - {err}' for err in sandbox_errors)
+        return _make_result(False, '', error_msg, -1, 'auto', sandbox_error=True)
     else:
-        return _make_result(False, '', f'Unknown sandbox method: {method}', -1, method)
+        return _make_result(False, '', f'Unknown sandbox method: {method}', -1, method, sandbox_error=True)
