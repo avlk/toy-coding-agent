@@ -313,5 +313,176 @@ def format_result(value):
         assert "Result: 15" in result['stdout']
 
 
+class TestSandboxErrorDistinction:
+    """Test proper distinction between sandbox errors and program failures."""
+
+    @pytest.fixture(autouse=True)
+    def setup_and_teardown(self, request):
+        """Create a temporary project directory for each test."""
+        self.test_dir = tempfile.mkdtemp(prefix="test_sandbox_errors_")
+        self.project_path = os.path.join(self.test_dir, "project")
+        os.makedirs(self.project_path)
+        
+        def fin():
+            shutil.rmtree(self.test_dir, ignore_errors=True)
+        request.addfinalizer(fin)
+
+    def _create_exit_code_project(self, exit_code: int):
+        """Create a project that exits with a specific code."""
+        main_py = os.path.join(self.project_path, "main.py")
+        with open(main_py, "w") as f:
+            f.write(f"""
+import sys
+print("Program running")
+sys.exit({exit_code})
+""")
+
+    def test_program_exits_with_zero(self):
+        """Test program that exits with code 0 (success)."""
+        self._create_exit_code_project(0)
+        result = execute_sandboxed(self.project_path, "main.py", method='subprocess')
+        
+        assert result['success'] is True
+        assert result['exit_code'] == 0
+        assert result['sandbox_error'] is False
+        assert "Program running" in result['stdout']
+
+    def test_program_exits_with_one(self):
+        """Test program that exits with code 1 (normal failure)."""
+        self._create_exit_code_project(1)
+        result = execute_sandboxed(self.project_path, "main.py", method='subprocess')
+        
+        assert result['success'] is False
+        assert result['exit_code'] == 1
+        assert result['sandbox_error'] is False  # Program ran, just failed
+        assert "Program running" in result['stdout']
+
+    def test_program_exits_with_minus_one(self):
+        """Test program that exits with code -1 (should not be confused with sandbox error)."""
+        self._create_exit_code_project(-1)
+        result = execute_sandboxed(self.project_path, "main.py", method='subprocess')
+        
+        # Key test: exit code -1 from program should NOT be treated as sandbox error
+        assert result['success'] is False
+        assert result['exit_code'] == 255  # Note: Unix converts -1 to 255
+        assert result['sandbox_error'] is False  # This is a program failure, not sandbox failure
+        assert "Program running" in result['stdout']
+
+    def test_program_exits_with_various_codes(self):
+        """Test programs with various exit codes."""
+        test_codes = [0, 1, 2, 42, 127]
+        for code in test_codes:
+            self._create_exit_code_project(code)
+            result = execute_sandboxed(self.project_path, "main.py", method='subprocess')
+            
+            assert result['exit_code'] == code, f"Exit code mismatch for {code}"
+            assert result['sandbox_error'] is False, f"Code {code} incorrectly marked as sandbox error"
+            assert "Program running" in result['stdout']
+
+    def test_sandbox_setup_error_nonexistent_project(self):
+        """Test that nonexistent project is marked as sandbox error."""
+        result = execute_sandboxed("/nonexistent/path", "main.py", method='subprocess')
+        
+        assert result['success'] is False
+        assert result['sandbox_error'] is True  # Setup error
+        assert "not found" in result['stderr'].lower()
+
+    def test_sandbox_setup_error_nonexistent_entry(self):
+        """Test that nonexistent entry point is marked as sandbox error."""
+        result = execute_sandboxed(self.project_path, "missing.py", method='subprocess')
+        
+        assert result['success'] is False
+        assert result['sandbox_error'] is True  # Setup error
+        assert "not found" in result['stderr'].lower()
+
+    def test_sandbox_setup_error_empty_args(self):
+        """Test that empty cmd_args is marked as sandbox error."""
+        result = execute_sandboxed(self.project_path, "", method='subprocess')
+        
+        assert result['success'] is False
+        assert result['sandbox_error'] is True  # Setup error
+        assert "cannot be empty" in result['stderr']
+
+    def test_sandbox_setup_error_unknown_method(self):
+        """Test that unknown sandbox method is marked as sandbox error."""
+        self._create_exit_code_project(0)
+        result = execute_sandboxed(self.project_path, "main.py", method='nonexistent_method')
+        
+        assert result['success'] is False
+        assert result['sandbox_error'] is True
+        assert "Unknown sandbox method" in result['stderr']
+
+    def test_auto_mode_stops_on_first_success(self):
+        """Test that auto mode stops trying methods once sandbox succeeds, even if program fails."""
+        # Create a program that will fail
+        self._create_exit_code_project(1)
+        
+        result = execute_sandboxed(self.project_path, "main.py", method='auto')
+        
+        # Should succeed in running (sandbox worked) even though program exited with 1
+        assert result['success'] is False  # Program failed
+        assert result['exit_code'] == 1
+        assert result['sandbox_error'] is False  # Sandbox worked fine
+        assert "Program running" in result['stdout']
+        # Should have used the first available method, not tried all of them
+        assert result['method'] in ['firejail', 'docker', 'bubblewrap', 'subprocess']
+
+    def test_auto_mode_with_program_exit_minus_one(self):
+        """Test that auto mode doesn't retry when program exits with -1 equivalent."""
+        # Create a program that will exit with -1
+        self._create_exit_code_project(-1)
+        
+        result = execute_sandboxed(self.project_path, "main.py", method='auto')
+        
+        # Should not have tried multiple methods - first one should have succeeded in running
+        assert result['sandbox_error'] is False  # Sandbox worked
+        assert "Program running" in result['stdout']
+        # Exit code will be 255 (Unix conversion of -1)
+        assert result['exit_code'] == 255
+
+    def test_runtime_error_not_sandbox_error(self):
+        """Test that runtime errors in program are not marked as sandbox errors."""
+        main_py = os.path.join(self.project_path, "main.py")
+        with open(main_py, "w") as f:
+            f.write("""
+print("Starting program")
+x = 1 / 0
+""")
+        
+        result = execute_sandboxed(self.project_path, "main.py", method='subprocess')
+        
+        assert result['success'] is False
+        assert result['sandbox_error'] is False  # Program error, not sandbox error
+        assert "ZeroDivisionError" in result['stderr']
+        assert "Starting program" in result['stdout']
+
+    def test_syntax_error_not_sandbox_error(self):
+        """Test that syntax errors in program are not marked as sandbox errors."""
+        main_py = os.path.join(self.project_path, "main.py")
+        with open(main_py, "w") as f:
+            f.write("print('incomplete\n")
+        
+        result = execute_sandboxed(self.project_path, "main.py", method='subprocess')
+        
+        assert result['success'] is False
+        assert result['sandbox_error'] is False  # Program error, not sandbox error
+        assert "SyntaxError" in result['stderr'] or "EOL" in result['stderr']
+
+    def test_import_error_not_sandbox_error(self):
+        """Test that import errors are not marked as sandbox errors."""
+        main_py = os.path.join(self.project_path, "main.py")
+        with open(main_py, "w") as f:
+            f.write("""
+import nonexistent_module
+print("This won't run")
+""")
+        
+        result = execute_sandboxed(self.project_path, "main.py", method='subprocess')
+        
+        assert result['success'] is False
+        assert result['sandbox_error'] is False  # Program error, not sandbox error
+        assert "ModuleNotFoundError" in result['stderr'] or "ImportError" in result['stderr']
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
