@@ -304,6 +304,8 @@ class ProjectFolder:
             
             metadata = self.get_metadata(full_path)
             
+            logger.info(f"load_file({file_path}): {len(content)} lines")
+            
             return {'content': content, 'metadata': metadata}
         except UnicodeDecodeError:
             raise ProjectFolderError(f"File is not a text file: {file_path}")
@@ -332,9 +334,17 @@ class ProjectFolder:
         try:
             full_path = self._validate_path(file_path)
             
-            # Check if file already exists
-            if full_path.exists() and not overwrite:
-                raise ProjectFolderError(f"File already exists: {file_path}. Use overwrite=True to replace it.")
+            # Track old line count if file exists
+            old_line_count = None
+            if full_path.exists():
+                if not overwrite:
+                    raise ProjectFolderError(f"File already exists: {file_path}. Use overwrite=True to replace it.")
+                # Get old line count for logging
+                try:
+                    with open(full_path, 'r', encoding='utf-8') as f:
+                        old_line_count = sum(1 for _ in f)
+                except:
+                    pass
             
             # Create parent directories if needed
             full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -372,6 +382,15 @@ class ProjectFolder:
             
             # Clear cache for this file
             self._clear_metadata_cache(full_path)
+            
+            # Log the operation
+            new_line_count = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
+            if old_line_count is not None:
+                diff = new_line_count - old_line_count
+                sign = '+' if diff >= 0 else ''
+                logger.info(f"create_file({file_path}, overwrite): {old_line_count} -> {new_line_count} ({sign}{diff}) lines")
+            else:
+                logger.info(f"create_file({file_path}): {new_line_count} lines")
             
             return self.get_metadata(full_path)
         

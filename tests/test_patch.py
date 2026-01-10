@@ -255,7 +255,7 @@ class TestPatchCode:
         
         result = patch_code(code_lines, patch_lines, fuzziness=0)
         
-        assert result == False
+        assert result != {}
         assert code_lines == ["line1", "line2"]  # Unchanged
     
     def test_patch_with_fuzziness(self):
@@ -269,7 +269,7 @@ class TestPatchCode:
         # Should fail with fuzziness=0
         code_lines_copy = code_lines.copy()
         result = patch_code(code_lines_copy, patch_lines, fuzziness=0)
-        assert result == False
+        assert result != {}
         
         # Should succeed with fuzziness=1
         result = patch_code(code_lines, patch_lines, fuzziness=1)
@@ -326,7 +326,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}  # Empty dict means success
             content = test_file.read_text()
             assert "line2_modified" in content
             assert "line2\n" not in content
@@ -359,7 +359,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             assert "B" in file1.read_text()
             assert "Y" in file2.read_text()
     
@@ -387,7 +387,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             content = test_file.read_text()
             assert "return 42" in content
     
@@ -408,7 +408,7 @@ class TestPatchProject:
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
             # Should fail due to security check
-            assert result == False
+            assert result != {}
     
     def test_nonexistent_file(self):
         """Test handling of patch for non-existent file."""
@@ -425,7 +425,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == False
+            assert result != {}
     
     def test_mixed_success_failure(self):
         """Test patch with some hunks succeeding and some failing."""
@@ -455,7 +455,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == False
+            assert result != {}
             # Good file should still be patched
             assert "LINE1" in good_file.read_text()
             # Bad file should remain unchanged
@@ -480,12 +480,12 @@ class TestPatchProject:
             # Should fail with fuzziness=0
             test_file.write_text("code_line  # comment\n")
             result = patch_project(project_dir, patch_lines, fuzziness=0)
-            assert result == False
+            assert result != {}
             
             # Should succeed with fuzziness=1
             test_file.write_text("code_line  # comment\n")
             result = patch_project(project_dir, patch_lines, fuzziness=1)
-            assert result == True
+            assert result == {}
             assert "new_line" in test_file.read_text()
     
     def test_multiple_hunks_same_file(self):
@@ -509,7 +509,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             content = test_file.read_text()
             assert "LINE1" in content
             assert "LINE3" in content
@@ -524,7 +524,7 @@ class TestPatchProject:
             result = patch_project(project_dir, [], fuzziness=0)
             
             # Should succeed (nothing to do)
-            assert result == True
+            assert result == {}
     
     def test_hunk_without_filename(self):
         """Test handling of hunks without filename information."""
@@ -541,7 +541,7 @@ class TestPatchProject:
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
             # Should succeed but skip hunks without filenames
-            assert result == True
+            assert result == {}
     
     def test_file_with_b_prefix_and_without(self):
         """Test parsing filenames with and without 'b/' prefix."""
@@ -571,7 +571,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             assert "A" in file1.read_text()
             assert "X" in file2.read_text()
     
@@ -596,7 +596,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             content = test_file.read_text()
             assert "inserted" in content
             assert "line2" not in content
@@ -625,7 +625,7 @@ class TestPatchProject:
             try:
                 result = patch_project(project_dir, patch_lines, fuzziness=0)
                 # Should fail due to write permission
-                assert result == False
+                assert result != {}
             finally:
                 # Restore permissions for cleanup
                 os.chmod(test_file, 0o644)
@@ -662,7 +662,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             new_file = project_dir / "newfile.py"
             assert new_file.exists()
             content = new_file.read_text()
@@ -690,7 +690,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             file1 = project_dir / "file1.py"
             file2 = project_dir / "file2.py"
             assert file1.exists()
@@ -713,7 +713,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             new_file = project_dir / "src" / "utils" / "helper.py"
             assert new_file.exists()
             assert "def helper():" in new_file.read_text()
@@ -741,7 +741,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             # Existing file should be modified
             assert "new_line" in existing_file.read_text()
             assert "old_line" not in existing_file.read_text()
@@ -795,7 +795,7 @@ class TestPatchProject:
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
             # Should create the file even if empty
-            assert result == True
+            assert result == {}
             empty_file = project_dir / "empty.txt"
             assert empty_file.exists()
     
@@ -819,7 +819,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             assert not delete_file.exists()
     
     def test_delete_multiple_files(self):
@@ -847,7 +847,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             assert not file1.exists()
             assert not file2.exists()
     
@@ -884,7 +884,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             # Modified file
             assert modify_file.exists()
             assert "new" in modify_file.read_text()
@@ -910,7 +910,7 @@ class TestPatchProject:
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
             # Should succeed (file already doesn't exist)
-            assert result == True
+            assert result == {}
     
     def test_deleted_file_flag_detection(self):
         """Test that application_mode is correctly set to DELETE when parsing file deletion patches."""
@@ -949,7 +949,7 @@ class TestPatchProject:
             
             result = patch_project(project_dir, patch_lines, fuzziness=0)
             
-            assert result == True
+            assert result == {}
             assert not delete_file.exists()
             # Parent directories should still exist
             assert subdir.exists()
