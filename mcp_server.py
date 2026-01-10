@@ -23,23 +23,28 @@ Date: December 28, 2025
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from mcp_utils import ProjectFolder, ProjectFolderError
-from patch import patch_project
+from patch import patch_project, is_unified_diff
 from sandbox_execution import execute_sandboxed
 from pathlib import Path
 from typing import Optional
 import json
 import logging
 
-# Configure logging for the MCP server and all imported modules
+# Configure logging: all logs to file, only mcp_utils to console
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('./solutions/mcp_server_debug.log'),
-        logging.StreamHandler()  # Also output to console if visible
+        logging.FileHandler('./solutions/mcp_server_debug.log')
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Add console handler specifically for mcp_utils
+mcp_utils_logger = logging.getLogger('mcp_utils')
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+mcp_utils_logger.addHandler(console_handler)
 
 
 def create_file_ops_server(project_path: str, server_name: str = "file-operations", sandbox_method: str = "auto") -> FastMCP:
@@ -238,17 +243,30 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         """
         try:
             patch_lines = patch_content.splitlines()
+            
+            # Check for unified diff format
+            if not is_unified_diff(patch_lines):
+                return {
+                    "success": False,
+                    "error": "Invalid patch format: not a valid unified diff",
+                    "hint": "Use unified diff format with @@ hunk headers and file markers (--- and +++)",
+                }
+            
             project_dir = Path(pf.project_path)
-            
-            logger.info(f"Applying patch to project at {project_dir}")
-            logger.debug(f"Patch content: {patch_content[:500]}...")  # First 500 chars
-            
+                        
             # Apply patch and capture result
-            success = patch_project(project_dir, patch_lines, fuzziness=2)
+            failures = patch_project(project_dir, patch_lines, fuzziness=2)
             
-            if not success:
-                logger.error("Patch application failed")
-                raise ToolError("Patch application failed")
+            if failures:
+                logger.error(f"Patch application failed - {len(failures)} file(s) had failures")
+                failed_files = [f"{name}: {count} failed hunk(s)" for name, count in failures.items()]
+                return {
+                    "success": False,
+                    "error": f"Patch application failed for {len(failures)} file(s)",
+                    "failed_files": failed_files,
+                    "hint": "Check that:\n1. File paths in patch match project structure\n2. Line numbers and context match current file content\n3. Files exist (or use /dev/null for new files)",
+                    "project_path": str(project_dir)
+                }
             
             logger.info("Patch applied successfully")
             return {
@@ -257,10 +275,17 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                 "project_path": str(project_dir)
             }
             
-        except ProjectFolderError:
-            raise
+        except ProjectFolderError as e:
+            # These are validation errors from ProjectFolder
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "validation_error"
+            }
         except Exception as e:
-            raise ToolError(f"Exception occurred during patch application: {str(e)}")
+            # System errors - these are truly unexpected
+            logger.exception("Unexpected error during patch application")
+            raise ToolError(f"System error during patch application: {str(e)}")
     
     # Expose execute_sandboxed as MCP tool
     @mcp.tool()

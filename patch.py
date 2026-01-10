@@ -328,7 +328,7 @@ def apply_hunks_to_code(code_lines: list[str], hunks: list[Hunk], fuzziness: int
     
     return failed_hunks
 
-def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0) -> bool:
+def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0) -> dict[str, int]:
     """
     Apply a patch to a project directory.
     
@@ -338,7 +338,8 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
         fuzziness: Level of fuzzy matching (0=exact, 1=ignore whitespace, 2=allow small differences)
     
     Returns:
-        True if all hunks were applied successfully, False otherwise
+        Dictionary mapping filename to number of failed hunks for that file.
+        Empty dict if all hunks were applied successfully.
     """
     project_dir = project_dir.resolve()  # Get absolute path
     hunk_list = extract_hunks(patch_lines)
@@ -355,7 +356,7 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
     
     logger.info(f"Extracted {len(hunk_list)} hunks for {len(hunks_by_file)} files")
     
-    all_success = True
+    failures = {}
     
     # Process each file
     for filename, file_hunks in hunks_by_file.items():
@@ -369,7 +370,7 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
             file_path.relative_to(project_dir)
         except ValueError:
             logger.error(f"File path {file_path} is outside project directory {project_dir}")
-            all_success = False
+            failures[filename] = len(file_hunks)
             continue
         
         # Check if this is a file deletion operation
@@ -388,12 +389,12 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
                 logger.info(f"[DELETED] {file_path}")
             except Exception as e:
                 logger.error(f"Failed to delete {file_path}: {e}")
-                all_success = False
+                failures[filename] = len(file_hunks)
             continue
         elif create_op:
             if file_path.exists():
                 logger.warning(f"File {file_path} already exists (can't overwrite)")
-                all_success = False
+                failures[filename] = len(file_hunks)
                 continue
 
             logger.info(f"[CREATE] Creating new file {file_path}")
@@ -408,7 +409,7 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
                     code_lines = f.read().splitlines()
             except Exception as e:
                 logger.error(f"Failed to read {file_path}: {e}")
-                all_success = False
+                failures[filename] = len(file_hunks)
                 continue
         
         # Apply hunks to code lines
@@ -417,7 +418,7 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
         # Report results for this file
         if failed_hunks > 0:
             logger.error(f"Failed to apply {failed_hunks}/{len(file_hunks)} hunks for {filename}")
-            all_success = False
+            failures[filename] = failed_hunks
         else:
             logger.info(f"[OK] Successfully applied {len(file_hunks)} hunks for {filename}")
             
@@ -428,14 +429,14 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
                 logger.info(f"[SAVED] {file_path}")
             except Exception as e:
                 logger.error(f"Failed to save {file_path}: {e}")
-                all_success = False
+                failures[filename] = len(file_hunks)
     
-    if all_success:
+    if not failures:
         logger.info(f"\n✓ Patch application complete. All hunks applied successfully.")
     else:
         logger.error(f"\n✗ Patch application failed. Some hunks could not be applied.")
     
-    return all_success
+    return failures
 
 
 def patch_code(code_lines: list[str], patch_lines: list[str], fuzziness: int = 0):

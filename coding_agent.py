@@ -386,9 +386,13 @@ def code(config: dict, context: Context, agent_runner, loop=None):
                             responses.append(part.text)
                             print(f"🤖 {part.text}", flush=True)
                         if hasattr(part, 'function_call') and part.function_call:
-                            print(f"🤖 Function call: {part.function_call.name}", flush=True)
+                            print(f"📢➡️ Function call: {part.function_call.name}", flush=True)
                         if hasattr(part, 'function_response') and part.function_response:
-                            print(f"🤖 Function response: Error={part.function_response.response['isError']}", flush=True)
+                            if part.function_response.response['isError']:
+                                response = "❗Error"
+                            else:
+                                response = "✅ Success"
+                            print(f"📢↩️ Function response: {response}", flush=True)
                 if event.usage_metadata:
                     token_tracker.print_call_info(event.usage_metadata, 0)  # No time info here
                     token_tracker.record(config["coder_model"], event.usage_metadata, 0)
