@@ -372,48 +372,35 @@ def code(config: dict, context: Context, agent_runner, loop=None):
         formatted_parts = [types.Part.from_text(text=f"## {title}\n{content}") for title, content in parts]
 
         
-        # Run in the persistent event loop to reuse MCP connection
-        if loop and loop.is_running():
-            # If loop is already running, schedule the coroutine
-            import concurrent.futures
-            future = asyncio.run_coroutine_threadsafe(
-                agent_runner.run_async(user_id=USER_ID, session_id=SESSION_ID, new_message=types.Content(role='user', parts=formatted_parts)),
-                loop
-            )
-            events_iterator = future.result()
-        else:
-            # Use the existing loop
-            async def run_agent():
-                events = []
-                async for event in agent_runner.run_async(user_id=USER_ID, session_id=SESSION_ID, new_message=types.Content(role='user', parts=formatted_parts)):
-                    events.append(event)
-                return events
-            
-            if loop:
-                events_list = loop.run_until_complete(run_agent())
-            else:
-                events_list = asyncio.run(run_agent())
-            events_iterator = iter(events_list)
-
+        # Process events as they arrive using async function
         responses = []
         final_answer = None
-        for event in events_iterator:
-            # print(f"\nDEBUG EVENT: {event}\n")
-            if event.content:
-                for part in event.content.parts:
-                    if hasattr(part, 'text') and part.text:
-                        responses.append(part.text)
-                        print(f"🤖 {part.text}", flush=True)
-                    if hasattr(part, 'function_call') and part.function_call:
-                        print(f"🤖 Function call: {part.function_call.name}", flush=True)
-                    if hasattr(part, 'function_response') and part.function_response:
-                        print(f"🤖 Function response: Error={part.function_response.response['isError']}", flush=True)
-            if event.usage_metadata:
-                token_tracker.print_call_info(event.usage_metadata, 0)  # No time info here
-                token_tracker.record(config["coder_model"], event.usage_metadata, 0)
-            if event.is_final_response():
-                final_answer = responses[-1] if responses else ""
-                print("\n🟢 FINAL ANSWER\n", final_answer, "\n")
+        
+        async def process_agent_events():
+            nonlocal final_answer
+            async for event in agent_runner.run_async(user_id=USER_ID, session_id=SESSION_ID, new_message=types.Content(role='user', parts=formatted_parts)):
+                # print(f"\nDEBUG EVENT: {event}\n")
+                if event.content:
+                    for part in event.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            responses.append(part.text)
+                            print(f"🤖 {part.text}", flush=True)
+                        if hasattr(part, 'function_call') and part.function_call:
+                            print(f"🤖 Function call: {part.function_call.name}", flush=True)
+                        if hasattr(part, 'function_response') and part.function_response:
+                            print(f"🤖 Function response: Error={part.function_response.response['isError']}", flush=True)
+                if event.usage_metadata:
+                    token_tracker.print_call_info(event.usage_metadata, 0)  # No time info here
+                    token_tracker.record(config["coder_model"], event.usage_metadata, 0)
+                if event.is_final_response():
+                    final_answer = responses[-1] if responses else ""
+                    print("\n🟢 FINAL ANSWER\n", final_answer, "\n")
+        
+        # Run in the persistent event loop to reuse MCP connection
+        if loop:
+            loop.run_until_complete(process_agent_events())
+        else:
+            asyncio.run(process_agent_events())
         
         end_time = time.monotonic()
         generation_time = end_time - start_time
@@ -540,7 +527,11 @@ def execute(config: dict, context: Context):
         actual_method = local_exec_result.get('method', sandbox_method)
         print(f"✅ Local execution successful using method: {actual_method}")
     else:
-        print(f"❌ Local execution returned error: {local_exec_result['stderr']}")
+        # Distinguish between sandbox failure and program failure
+        if local_exec_result.get('sandbox_error', False):
+            print(f"❌ Sandbox initialization failed: {local_exec_result['stderr']}")
+        else:
+            print(f"❌ Local execution returned error: {local_exec_result['stderr']}")
 
     # Check if there were obvious syntax errors
     if "SyntaxError" in local_exec_result['stderr']  or "IndentationError" in local_exec_result['stderr']:
