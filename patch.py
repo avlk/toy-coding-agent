@@ -86,7 +86,7 @@ class Hunk:
                 break
         if actual_start > self.MAX_STARTING_CONTEXT:
             trim_amount = actual_start - self.MAX_STARTING_CONTEXT
-            print(f"Trimming {trim_amount} starting context lines")
+            logger.debug(f"Trimming {trim_amount} starting context lines")
             self.match = self.match[trim_amount:]
             self.replace = self.replace[trim_amount:]
 
@@ -103,7 +103,7 @@ class Hunk:
         if actual_end > self.MAX_TRAILING_CONTEXT:
             trim_amount = actual_end - self.MAX_TRAILING_CONTEXT
             if trim_amount > 0:
-                print(f"Trimming {trim_amount} trailing context lines")
+                logger.debug(f"Trimming {trim_amount} trailing context lines")
                 self.match = self.match[:-trim_amount]
                 self.replace = self.replace[:-trim_amount]
 
@@ -294,7 +294,7 @@ def apply_hunks_to_code(code_lines: list[str], hunks: list[Hunk], fuzziness: int
     
     for hunk in hunks:
         if hunk.empty():
-            print("[SKIP] Useless hunk")
+            logger.info("[SKIP] Useless hunk")
             continue
         
         # For file creation, apply at position 0 without matching
@@ -307,11 +307,15 @@ def apply_hunks_to_code(code_lines: list[str], hunks: list[Hunk], fuzziness: int
             hunk_start = hunk.match_code(code_lines, fuzziness_level)
             if hunk_start is not None:
                 if fuzziness_level > 0:
-                    print(f"[WARNING] Hunk {hunk} applied with fuzziness {fuzziness_level}")
+                    logger.info(f"[WARNING] Hunk {hunk} applied with fuzziness {fuzziness_level}")
                 break
         
         if hunk_start is None:
-            print(f"[FAIL] Can't apply hunk {hunk}")
+            logger.error(f"[FAIL] Can't apply hunk {hunk}")
+            # print the hunk for debugging
+            logger.debug("Hunk content:")
+            for line in hunk.match:
+                logger.debug(line)
             failed_hunks += 1
         else:
             application_list.append((hunk_start, hunk))

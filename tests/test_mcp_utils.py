@@ -308,9 +308,11 @@ class TestCreateFile:
     
     def test_create_file_basic(self, project_folder):
         """Test basic file creation."""
-        metadata = project_folder.create_file("new.txt", "New content")
+        result = project_folder.create_file("new.txt", "New content")
         
-        assert 'path' in metadata
+        assert result['status'] == 'success'
+        assert 'metadata' in result
+        assert result['metadata']['path'] == 'new.txt'
         
         # Verify file exists
         file_path = project_folder.project_path / "new.txt"
@@ -320,9 +322,10 @@ class TestCreateFile:
     
     def test_create_file_with_subdirectory(self, project_folder):
         """Test creating file with new subdirectory."""
-        metadata = project_folder.create_file("newdir/newfile.txt", "Content")
+        result = project_folder.create_file("newdir/newfile.txt", "Content")
         
-        assert 'path' in metadata
+        assert result['status'] == 'success'
+        assert 'metadata' in result
         
         # Verify file and directory exist
         file_path = project_folder.project_path / "newdir" / "newfile.txt"
@@ -332,8 +335,11 @@ class TestCreateFile:
     def test_create_file_fails_if_exists(self, project_folder):
         """Test that creating file fails if it already exists."""
         # Try to create a file that already exists
-        with pytest.raises(ProjectFolderError, match="already exists"):
-            project_folder.create_file("simple.txt", "New content")
+        result = project_folder.create_file("simple.txt", "New content")
+        
+        assert result['status'] == 'error'
+        assert result['error'] == 'file_exists'
+        assert 'already exists' in result['message']
         
         # Verify original content is preserved
         file_path = project_folder.project_path / "simple.txt"
@@ -342,9 +348,10 @@ class TestCreateFile:
     
     def test_create_file_with_overwrite(self, project_folder):
         """Test that creating file with overwrite=True replaces existing."""
-        metadata = project_folder.create_file("simple.txt", "New content", overwrite=True)
+        result = project_folder.create_file("simple.txt", "New content", overwrite=True)
         
-        assert 'path' in metadata
+        assert result['status'] == 'success'
+        assert 'metadata' in result
         
         # Verify content is overwritten
         file_path = project_folder.project_path / "simple.txt"
@@ -362,7 +369,9 @@ class TestCreateFile:
         assert file_name in project_folder._metadata_cache
         
         # Create/overwrite file with 4 lines
-        project_folder.create_file(file_name, "New\nContent\nWith\nLines", overwrite=True)
+        result = project_folder.create_file(file_name, "New\nContent\nWith\nLines", overwrite=True)
+        
+        assert result['status'] == 'success'
         
         # Cache should have new count
         new_metadata = project_folder.get_metadata(file_path)
@@ -370,14 +379,18 @@ class TestCreateFile:
     
     def test_create_file_path_traversal(self, project_folder):
         """Test that path traversal is blocked."""
-        with pytest.raises(ProjectFolderError, match="outside the project folder"):
-            project_folder.create_file("../outside.txt", "Content")
+        result = project_folder.create_file("../outside.txt", "Content")
+        
+        assert result['status'] == 'error'
+        assert result['error'] == 'validation_error'
+        assert 'outside the project folder' in result['message']
     
     def test_create_file_with_empty_content(self, project_folder):
         """Test creating file with empty content."""
-        metadata = project_folder.create_file("empty_new.txt", "")
+        result = project_folder.create_file("empty_new.txt", "")
         
-        assert 'path' in metadata
+        assert result['status'] == 'success'
+        assert 'metadata' in result
         file_path = project_folder.project_path / "empty_new.txt"
         assert file_path.exists()
         assert file_path.stat().st_size == 0
@@ -385,14 +398,14 @@ class TestCreateFile:
     def test_create_file_with_list_of_lines(self, project_folder):
         """Test creating file with list of lines."""
         lines = ["Line 1", "Line 2", "Line 3"]
-        metadata = project_folder.create_file("list_test.txt", lines)
+        result = project_folder.create_file("list_test.txt", lines)
         
-        assert 'path' in metadata
-        assert metadata['path'] == 'list_test.txt'
+        assert result['status'] == 'success'
+        assert result['metadata']['path'] == 'list_test.txt'
         
         # Verify file content using load_file
-        result = project_folder.load_file("list_test.txt")
-        assert result['content'] == lines
+        load_result = project_folder.load_file("list_test.txt")
+        assert load_result['content'] == lines
     
     def test_create_file_round_trip(self, project_folder):
         """Test load -> modify -> save round trip with list of lines."""
@@ -404,12 +417,30 @@ class TestCreateFile:
         lines[1] = "Modified Line 2"
         
         # Save back
-        metadata = project_folder.create_file("modified.txt", lines)
-        assert 'path' in metadata
+        create_result = project_folder.create_file("modified.txt", lines)
+        assert create_result['status'] == 'success'
         
         # Verify changes
         result2 = project_folder.load_file("modified.txt")
         assert result2['content'] == ["Line 1", "Modified Line 2", "Line 3"]
+    
+    def test_create_file_no_change(self, project_folder):
+        """Test that overwriting with unchanged content returns no_change status."""
+        # First create a file
+        original_content = "Test content\nWith multiple lines\n"
+        result1 = project_folder.create_file("test_unchanged.txt", original_content)
+        assert result1['status'] == 'success'
+        
+        # Now overwrite with the exact same content
+        result2 = project_folder.create_file("test_unchanged.txt", original_content, overwrite=True)
+        assert result2['status'] == 'no_change'
+        assert 'unchanged' in result2['message'].lower()
+        assert 'metadata' in result2
+        
+        # Verify file content is still correct
+        file_path = project_folder.project_path / "test_unchanged.txt"
+        with open(file_path, 'r') as f:
+            assert f.read() == original_content
 
 
 class TestRemoveFile:
@@ -766,13 +797,15 @@ class TestEdgeCases:
         pf = ProjectFolder(temp_project)
         
         deep_path = "a/b/c/d/e/deep.txt"
-        metadata = pf.create_file(deep_path, "Deep content")
+        result = pf.create_file(deep_path, "Deep content")
         
-        assert 'path' in metadata
+        assert result['status'] == 'success'
+        assert 'metadata' in result
+        assert result['metadata']['path'] == deep_path
         
         # Verify we can load it
-        result = pf.load_file(deep_path)
-        assert result['content'] == ["Deep content"]
+        load_result = pf.load_file(deep_path)
+        assert load_result['content'] == ["Deep content"]
     
     def test_file_with_very_long_lines(self, temp_project):
         """Test handling files with very long lines."""
@@ -781,11 +814,12 @@ class TestEdgeCases:
         long_line = "x" * 10000
         content = f"Short\n{long_line}\nShort"
         
-        metadata = pf.create_file("long_lines.txt", content)
-        assert 'path' in metadata
+        result = pf.create_file("long_lines.txt", content)
+        assert result['status'] == 'success'
+        assert 'metadata' in result
         
-        result = pf.load_file("long_lines.txt")
-        assert long_line in result['content']
+        load_result = pf.load_file("long_lines.txt")
+        assert long_line in load_result['content']
 
 
 if __name__ == "__main__":
