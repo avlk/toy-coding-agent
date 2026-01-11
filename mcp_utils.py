@@ -326,23 +326,30 @@ class ProjectFolder:
             overwrite: If True, overwrite existing file. If False, fail if file exists. Default: False
             
         Returns:
-            Dictionary with file metadata
-            
-        Raises:
-            ProjectFolderError: If file exists and overwrite=False, or operation fails
+            Dictionary with:
+                - status: 'success', 'error', or 'no_change'
+                - message: Description of the result
+                - metadata: File metadata (only present on success or no_change)
+                - error: Error details (only present on error)
         """
         try:
             full_path = self._validate_path(file_path)
             
-            # Track old line count if file exists
+            # Track old content if file exists
             old_line_count = None
+            old_content = None
             if full_path.exists():
                 if not overwrite:
-                    raise ProjectFolderError(f"File already exists: {file_path}. Use overwrite=True to replace it.")
-                # Get old line count for logging
+                    return {
+                        'status': 'error',
+                        'message': f"File already exists: {file_path}. Use overwrite=True to replace it.",
+                        'error': 'file_exists'
+                    }
+                # Get old content for logging
                 try:
                     with open(full_path, 'r', encoding='utf-8') as f:
-                        old_line_count = sum(1 for _ in f)
+                        old_content = f.read()
+                        old_line_count = old_content.count('\n') + (1 if old_content and not old_content.endswith('\n') else 0)
                 except:
                     pass
             
@@ -376,6 +383,16 @@ class ProjectFolder:
                     f"Actual lines: {content.count(chr(10))}"
                 )
             
+            # Check if content is unchanged (for overwrite case)
+            if old_content is not None and old_content == content:
+                metadata = self.get_metadata(full_path)
+                logger.info(f"create_file({file_path}, overwrite, no_change): content unchanged")
+                return {
+                    'status': 'no_change',
+                    'message': f"File content unchanged: {file_path}",
+                    'metadata': metadata
+                }
+            
             # Write the file
             with open(full_path, 'w', encoding='utf-8') as f:
                 f.write(content)
@@ -388,18 +405,35 @@ class ProjectFolder:
             if old_line_count is not None:
                 diff = new_line_count - old_line_count
                 sign = '+' if diff >= 0 else ''
-                logger.info(f"create_file({file_path}, overwrite): {old_line_count} -> {new_line_count} ({sign}{diff}) lines")
+                logger.info(f"create_file({file_path}, overwrite, changed): {old_line_count} -> {new_line_count} ({sign}{diff}) lines")
             else:
                 logger.info(f"create_file({file_path}): {new_line_count} lines")
             
-            return self.get_metadata(full_path)
+            metadata = self.get_metadata(full_path)
+            return {
+                'status': 'success',
+                'message': f"File {'updated' if old_line_count is not None else 'created'}: {file_path}",
+                'metadata': metadata
+            }
         
-        except ProjectFolderError:
-            raise
+        except ProjectFolderError as e:
+            return {
+                'status': 'error',
+                'message': str(e),
+                'error': 'validation_error'
+            }
         except PermissionError:
-            raise ProjectFolderError(f"Permission denied: {file_path}")
+            return {
+                'status': 'error',
+                'message': f"Permission denied: {file_path}",
+                'error': 'permission_denied'
+            }
         except Exception as e:
-            raise ProjectFolderError(f"Failed to create file: {str(e)}")
+            return {
+                'status': 'error',
+                'message': f"Failed to create file: {str(e)}",
+                'error': 'unknown_error'
+            }
     
     def remove_file(self, file_path: str) -> str:
         """

@@ -114,10 +114,22 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             overwrite: If True, overwrite existing file. If False, fail if file exists (default: False)
         
         Returns:
-            Dictionary with file metadata (path, size_bytes, size_lines, mtime)
+            Dictionary with:
+                - status: 'success', 'error', or 'no_change'
+                - message: Description of the result
+                - metadata: File metadata (only present on success or no_change)
+                - error: Error code (only present on error)
         """
         logger.info(f"create_file({file_path!r}, overwrite={overwrite}) called")
-        return pf.create_file(file_path, content, overwrite=overwrite)
+        result = pf.create_file(file_path, content, overwrite=overwrite)
+        
+        # Log the result status
+        if result['status'] == 'error':
+            logger.error(f"create_file failed: {result['message']}")
+        elif result['status'] == 'no_change':
+            logger.warning(f"create_file no change: {result['message']}")
+        
+        return result
     
     # Expose remove_file as MCP tool
     @mcp.tool()
