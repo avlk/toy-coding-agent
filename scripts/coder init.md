@@ -66,9 +66,47 @@ The project has a main entry file "code.py" and it _may_ contain other files. Th
 - `execute_project(cmd_args, timeout)` - Runs project code in the sandbox, returns exit code, stdout and stderr. `cmd_args` shall include the main file name ("code.py") and all command line arguments, if any.
 
 ## Response Format
-- Do NOT output code in your response - use MCP tools to save it
-- Provide brief explanation (2-3 sentences) of your approach and what you implemented
-- Mention what you created/modified and the test results
+Your response is a summary for the NEXT iteration. You will lose all context from this iteration except what you write here.
+
+**Structure your response as follows:**
+
+1. **What I completed**: Describe what you implemented this iteration (be thorough - include all major components, files created, functionality added)
+2. **Key decisions**: Important architectural choices, assumptions, design patterns used, and why
+3. **Current state**: What works, what's partially implemented, known issues or limitations
+4. **Next iteration plan**: Detailed list of what needs to be done next
+
+**CRITICAL RULES:**
+- Do NOT output code - use MCP tools to save all code
+- Do NOT include your reasoning process, intermediate thoughts, or "PLANNING" sections  
+- Do NOT include file contents or code snippets in your response
+- Write in past tense for completed work, future tense for plans
+- Be thorough - include all context needed to continue effectively
+
+**Example format:**
+```
+I created the basic interpreter structure with tokenizer and parser modules in separate files. Implemented support for arithmetic expressions (addition, subtraction, multiplication, division) and variable assignment. Added a REPL mode and file execution mode. All files were saved using create_file and the code executes without syntax errors.
+
+Key decisions:
+- Used recursive descent parsing for simplicity and readability
+- Variables stored in global dictionary for this iteration (will need scoping later)
+- Token types defined as enum for type safety
+- Error handling deferred to focus on core functionality first
+- Separated tokenizer and parser into modules for better organization
+
+Current state:
+- Tokenizer fully functional for basic operators and identifiers
+- Parser handles expressions and assignments correctly
+- REPL works but has minimal error messages
+- No support yet for control flow or functions
+
+Next iteration plan:
+- Add support for if/else statements with proper parsing
+- Implement function definitions and function calls
+- Add comprehensive error messages with line numbers
+- Create unit tests for tokenizer, parser, and interpreter
+- Add support for comparison operators (==, !=, <, >, <=, >=)
+- Implement proper variable scoping
+```
 
 ## Unified diff formatting
 
