@@ -49,6 +49,7 @@ llm = genai.Client(api_key=api_key)
 class Iteration:
     def __init__(self):
         self.code = {}  # Dict of {filepath: content}
+        self.coder_summary = None
         self.feedback = None
         self.flags = set()
         self.program_output = None
@@ -334,7 +335,7 @@ def research(config: dict, context: Context):
     context.research_summary = summary or "No research summary available."
     return True
 
-def code(config: dict, context: Context, agent_runner, loop=None):
+def code(config: dict, context: Context, agent_runner, session_id: str, loop=None):
 
     if context.previous:
         prompt = load_file("scripts/coder step.md")
@@ -347,6 +348,8 @@ def code(config: dict, context: Context, agent_runner, loop=None):
             parts.append(("Previous Execution Results", to_string(context.previous.program_output)))
         if context.previous.feedback:
             parts.append(("Code Review Feedback", to_string(context.previous.feedback)))
+        if context.previous.coder_summary:
+            parts.append(("Your summary from the previous iteration", to_string(context.previous.coder_summary)))
     else:
         print("📝 Starting initial code generation...")
         # For first iteration, include use case, goals, and optionally research
@@ -378,7 +381,7 @@ def code(config: dict, context: Context, agent_runner, loop=None):
         
         async def process_agent_events():
             nonlocal final_answer
-            async for event in agent_runner.run_async(user_id=USER_ID, session_id=SESSION_ID, new_message=types.Content(role='user', parts=formatted_parts)):
+            async for event in agent_runner.run_async(user_id=USER_ID, session_id=session_id, new_message=types.Content(role='user', parts=formatted_parts)):
                 # print(f"\nDEBUG EVENT: {event}\n")
                 if event.content:
                     for part in event.content.parts:
@@ -430,15 +433,7 @@ def code(config: dict, context: Context, agent_runner, loop=None):
         #     print(f"⚠️  Could not save raw response JSON: {e}")
         #     context.save_to("{name}_coder_raw_{iter}.json", json.dumps({"text": text, "error": str(e)}, indent=2), content_name="raw agent JSON response")
         context.save_to("{name}_coder_text_{iter}.md", final_answer, content_name="raw agent text")
-        
-        # Print usage info if available
-        # if code_response["usage"]:
-        #    token_tracker.print_call_info(code_response["usage"], generation_time)
-        #    token_tracker.record(config["coder_model"], code_response["usage"], generation_time)
-        
-        # Check if MCP tools were used
-        context.current.add_flag('agent_used_mcp')
-        print("🛈 Agent used MCP tools for code generation")
+        context.current.coder_summary = final_answer
 
         # Agent should have saved code using create_file tool
         # Read all Python files from the project directory
@@ -803,8 +798,20 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
 
             context.start_iteration()
 
-            # Run coding stage with agent (pass loop to reuse it)
-            if not code(task_config, context, agent_runner=coding_agent_runner, loop=loop):
+            # Create fresh session for this iteration to prevent context overflow
+            iteration_session_id = f"{SESSION_ID}_iter_{i+1}"
+            print(f"🔄 Creating fresh session: {iteration_session_id}")
+            loop.run_until_complete(
+                coding_session_service.create_session(
+                    app_name=APP_NAME,
+                    user_id=USER_ID,
+                    session_id=iteration_session_id
+                )
+            )
+
+            # Run coding stage with agent (pass loop and session_id)
+            if not code(task_config, context, agent_runner=coding_agent_runner, 
+                       session_id=iteration_session_id, loop=loop):
                 context.erase_iteration()
                 print("❌ Model generated some bad output, repeating iteration")
                 continue
