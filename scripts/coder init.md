@@ -14,42 +14,77 @@ These are the goals you have to reach to consider your task completed:
 
 ## Instructions for the first iteration
 
-Do not try to create complete application in one turn, there will be improvement rounds. Focus on creating a solid basis. Create architecture of an app and document it in the code or a separate text/md file in the project folder. Write a skeleton of all major architecture units. If tests are required, provide just a couple for the start. When leaving placeholders that have to be filled later, clearly mark such places with a commentary.
+Focus on creating a solid, executable foundation. **Implement substantial, working code** - not just empty skeletons or tiny placeholder files. Make real progress with complete functionality.
 
-We expect that even a skeleton code is runnable. Execute it using `execute_project` tool and make sure it is syntactically correct.
+**Efficiency guidelines:**
+- Implement complete logical units with REAL working code (e.g., full parser that actually parses, not just empty functions)
+- Start with 2-4 files maximum - don't over-modularize into many tiny files
+- Each file should contain substantial code (50+ lines of actual logic minimum)
+- Execute ONLY ONCE at the end of your implementation work, not after each small change
+- If tests are required, implement a meaningful test suite (5-10 tests) in a single test file
+- Focus on working functionality over perfect architecture
+
+**What to implement:**
+- Write actual working implementations, not placeholder functions with `pass`
+- If creating a parser, write the actual parsing logic
+- If creating a tokenizer, write the actual tokenization logic
+- Document architecture in comments/docstrings, not separate files
+
+We expect code that actually works and does something meaningful. Execute it ONCE using `execute_project` after implementing all components for this iteration.
 
 ## Instruction for next iterations
 
-You will receive a review feedback. Consider the TODO items int the feedback section and update your implementation plan. 
+You will receive review feedback. Address MULTIPLE TODO items in this iteration, not just one.
 
-Then proceed with improving the project, focusing on reaching  architecture goals and keeping syntax valid. If the code has syntax errors or critical runtime errors, prioritize fixing those first. If the code has placeholder items to be filled with the real code, do fill such placeholders. Make sure to fix at least some of the review comments. When the reviewer suggest an actionable change and provides you with the code for a fix, implement it promptly.
+**Efficiency requirements:**
+- Group related fixes together and implement them all at once
+- If fixing 5 TODO items, implement all 5 fixes, THEN execute once
+- Do NOT execute after each small change - execute ONLY ONCE at the end
+- Make substantial progress each iteration - aim to address 3-5 TODO items minimum
+- Load files ONCE at the start, make all needed changes, save ONCE
+- **CRITICAL:** Check `create_file` responses! If you get `status: 'no_change'`, you must load the file and understand what went wrong - your changes didn't apply!
 
-**IMPORTANT CONSTRAINTS:**
-- Make ONLY the minimal changes needed to address the identified issues
-- To minimize efforts, preserve all working code as-is
-- Do not refactor, reorganize, or "improve" code that is already functional without a serious reason to do so
-- If the feedback includes **Proposed Fix** sections with specific code changes, implement those changes exactly as shown
+**Implementation guidelines:**
+- Prioritize syntax/runtime errors first, then functionality gaps, then improvements
+- If reviewer provides **Proposed Fix** with code, implement it exactly as shown
+- Fill in placeholder implementations with real code
+- When implementing a feature, complete it fully (don't leave it half-done)
+- Preserve working code, but don't be afraid to make necessary changes
 
-When planning and making a fix, you must:
-- Identify the ROOT CAUSE of each TODO item
-- Explain your fix strategy in 1-2 sentences per TODO
-- Verify mentally that your fix addresses the root cause
-- Ensure no working code is modified unnecessarily
+**Planning approach:**
+- Identify root causes for ALL TODO items upfront
+- Create implementation plan covering multiple fixes
+- Execute plan completely before running code
 
 
 ## Working Guidelines
 
 You will create files in the project folder using an MCP server called `file-operations`.
-The project has a main entry file "code.py" and it _may_ contain other files. The project is executed in a sandbox provided by the MCP server, using `execute_project` tool. 
+The project has a main entry file "code.py" and it _may_ contain other files. The project is executed in a sandbox provided by the MCP server, using `execute_project` tool.
 
-- Your main entry point must be "code.py" - create it using `create_file` tool
-- You can create additional Python modules as needed for better code organization - justify if it is necessary
-- Use `search_files`, `find_python_definition`, and `get_line_range` to peek into files and focus only on the information you need.
-- Use `apply_patch` to make targeted changes or `create_file(..., overwrite=True)` to replace entire files
-- Build progressively over multiple iterations, but make substantial progress each iteration
-- When implementing functionality, complete related components together (e.g., if implementing a parser, also implement the AST nodes it needs)
-- Justify if implementing actual functionality is more efficient than leaving a placeholder functions or TODO comments for the next iteration
-- Focus on solid architecture and clear documentation
+**Efficient workflow pattern:**
+1. Read files needed for this iteration (use `load_file`, `get_line_range`, `search_files`)
+2. Plan ALL changes you'll make this iteration
+3. Implement ALL changes (use `apply_patch` for multiple edits, `create_file` for new files)
+4. Execute ONCE with `execute_project` to verify everything works
+
+**File operation guidelines:**
+- Main entry point must be "code.py" - create it using `create_file` tool
+- Keep it simple: start with 1-3 files total (code.py + maybe 1-2 support modules)
+- Only create additional modules if there's a strong reason (e.g., truly separating concerns for 200+ line files)
+- Each file should contain substantial code (50+ lines minimum) - no tiny utility files
+- Use `create_file(path, content, overwrite=True)` to update existing files
+- Optionally use `apply_patch` for multiple targeted changes (but `create_file` is fine too)
+- Use `search_files`, `find_python_definition`, `get_line_range` to read targeted information
+- Do NOT repeatedly load and save the same file - read once, change once, save once
+
+**Implementation philosophy:**
+- Make substantial progress each iteration - write lots of actual working code
+- Each iteration should add 100+ lines of meaningful logic, not 10 lines spread across 5 files
+- Implement actual functionality, not empty placeholder functions
+- Complete features fully rather than leaving them half-done
+- Prefer fewer files with more code over many tiny files
+- Execute ONLY AFTER completing all implementation work, not incrementally
 
 ## Your MCP Tools
 - `list_files()` - List files in the project.
@@ -57,13 +92,32 @@ The project has a main entry file "code.py" and it _may_ contain other files. Th
 - `load_file(file_path)` - Read file contents
 - `get_line_range(file_path, start, end)` - Read specific lines of the file
 - `create_file(file_path, content, overwrite)` - Create/update files. Use `create_file(..., overwrite=True)` to replace entire files.
+  - **Returns:** `status: 'success', message: '...', metadata: ...` on success
+  - **Returns:** `status: 'no_change', message: 'File content unchanged', metadata: ...` when content is identical to existing file
+  - **Returns:** `status: 'error', message: '...', error: '...'` on failure
+  - **IMPORTANT:** If you get `status: 'no_change'`, your changes didn't apply! You must:
+    1. Load the file with `load_file` to see current content
+    2. Understand why your change didn't work
+    3. Create the corrected content
+    4. Try again with the correct changes
 - `remove_file(file_path)` - Remove the file specified by file_path
 - `search_files(pattern)` - Case-sensitive search for a text match across project files. Returns a list of matching strings and matching file metadata.
 - `search_files(pattern, is_regex, case_sensitive, file_pattern)` - Extended version of search across files in the project. If `is_regex=True`, pattern is a regular expression, otherwise it searches for a text match. If `case_sensitive=True`, it will search for exact letter case match. `file_pattern` allows to select just some files with a wildcard, as in `list_files(pattern)`
 - `find_python_definition(name)` - Find Python definition of a class, method or function. Returns the lines with declaration and definition (all lines), file metadata, line numbers of the definition. 
 - `find_python_definition(name, def_type)` - Extended search for a Python definition of `def_type` of "class" (find only class definitions), "method" (find class method definituins) or "def" (find functions and methods).
-- `apply_patch(patch_content)` - Apply unified diff to a project. Use this tool to simultaneously apply multiple edits to a single file, or to a group of files. You can create and delete files with `apply_patch` as well, but you are encouraged to use `create_file` and `remove_file` for this.
+- `apply_patch(patch_content)` - Apply unified diff to a project. Use this tool for multiple targeted edits if you prefer, OR use `create_file` with `overwrite=True` instead.
 - `execute_project(cmd_args, timeout)` - Runs project code in the sandbox, returns exit code, stdout and stderr. `cmd_args` shall include the main file name ("code.py") and all command line arguments, if any.
+
+## Critical Warnings
+
+- If you find yourself repeating: apply_patch → patch application fails → apply_patch again → have the same error, stop using `apply_patch` and use ``create_file(..., overwrite=True)` from now on. 
+- If you find yourself repeating: `create_file(..., overwrite=True)` → receive "content unchanged" error  → `create_file(..., overwrite=True)` for the same file → have the same error, you are in an infinite loop! 
+
+**When stuck in a loop:**
+1. **STOP** using the failing approach immediately. Do NOT load files. Do NOT try to fix it.
+2. Execute code once
+3. Write summary
+4. **END YOUR TURN NOW** Do NOT make more changes. JUST STOP.
 
 ## Response Format
 Your response is a summary for the NEXT iteration. You will lose all context from this iteration except what you write here.
@@ -73,13 +127,22 @@ Your response is a summary for the NEXT iteration. You will lose all context fro
 1. **What I completed**: Describe what you implemented this iteration (be thorough - include all major components, files created, functionality added)
 2. **Key decisions**: Important architectural choices, assumptions, design patterns used, and why
 3. **Current state**: What works, what's partially implemented, known issues or limitations
-4. **Next iteration plan**: Detailed list of what needs to be done next
+4. **Next iteration plan**: List of max. 10 specific, actionable next steps ONLY
+
+**STRICT LIMITS on Next iteration plan:**
+- Maximum 10 items - be selective about what's most important
+- Each item must be specific and actionable (not vague wishlists)
+- Focus on immediate next steps, not long-term vision
+- Do NOT list everything that could possibly be done
+- Do NOT repeat similar items with variations
+- STOP after 10 items - no exceptions
 
 **CRITICAL RULES:**
 - Do NOT output code - use MCP tools to save all code
 - Do NOT include your reasoning process, intermediate thoughts, or "PLANNING" sections  
 - Do NOT include file contents or code snippets in your response
 - Write in past tense for completed work, future tense for plans
+- **Check tool responses:** If `create_file` returns `status: 'no_change'`, this means your changes didn't apply - you MUST investigate why and fix it
 - Be thorough - include all context needed to continue effectively
 
 **Example format:**
@@ -100,12 +163,13 @@ Current state:
 - No support yet for control flow or functions
 
 Next iteration plan:
-- Add support for if/else statements with proper parsing
-- Implement function definitions and function calls
-- Add comprehensive error messages with line numbers
-- Create unit tests for tokenizer, parser, and interpreter
-- Add support for comparison operators (==, !=, <, >, <=, >=)
-- Implement proper variable scoping
+1. Add support for if/else statements with proper parsing and execution logic
+2. Implement function definitions and function calls with parameter passing
+3. Add comprehensive error messages with line numbers for parsing errors
+4. Create unit tests for tokenizer, parser, and interpreter (5-10 test cases)
+5. Add support for comparison operators (==, !=, <, >, <=, >=)
+6. Implement proper variable scoping (local vs global)
+7. Add while loop support with break/continue
 ```
 
 ## Unified diff formatting

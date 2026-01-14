@@ -48,4 +48,4 @@ An embedded markdown documentation of the language syntax and features shall be 
 
 When run from command line with "--syntax" flag, the program shall print this documentation to stdout and exit.
 
-Make sure that the interpreter compiles and runs the test programs by using the code_execution tool before submitting the result.
+Make sure that the interpreter compiles and runs the test programs before submitting the result.
