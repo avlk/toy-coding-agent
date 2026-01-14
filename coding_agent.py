@@ -12,8 +12,7 @@ import re
 import sys
 import json
 import time
-import subprocess
-import tempfile
+import traceback
 import argparse
 import asyncio
 import logging
@@ -25,6 +24,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.adk.planners import PlanReActPlanner
+from google.adk.code_executors import BuiltInCodeExecutor
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, StdioConnectionParams, StdioServerParameters
 from patch import patch_code, is_unified_diff
 from sandbox_execution import execute_sandboxed
@@ -125,10 +125,7 @@ class Context:
             
 
 llm_config_coder = genai.types.GenerateContentConfig(
-    temperature=0.3,
-    tools=[
-        genai.types.Tool(code_execution=genai.types.ToolCodeExecution), 
-    ],
+    temperature=1.0
 )
 
 llm_config_reviewer = genai.types.GenerateContentConfig(
@@ -451,7 +448,7 @@ def code(config: dict, context: Context, agent_runner, session_id: str, loop=Non
                 dirs[:] = [d for d in dirs if d not in skip_dirs]
                 
                 for file in files:
-                    if file.endswith('.py'):
+                    if file.endswith('.py') or file.endswith('.txt') or file.endswith('.md') or file.endswith('.json'):
                         file_path = os.path.join(root, file)
                         rel_path = os.path.relpath(file_path, project_path)
                         with open(file_path, 'r') as f:
@@ -494,6 +491,7 @@ def code(config: dict, context: Context, agent_runner, session_id: str, loop=Non
         print(f"❌ Error during code generation: {e}")
         # Print error class name
         print(f"❌ Exception type: {type(e).__name__}")
+        traceback.print_exc()
         return False
 
     return True
@@ -700,6 +698,41 @@ def create_filename(basename: str) -> str:
     random_suffix = str(random.randint(1000, 9999))
     return f"{basename}_{random_suffix}"
 
+def wait_mcp_operation_complete(mcp_toolset, loop, max_retries=20, delay=5):
+    """
+    Wait for MCP server to be ready by attempting to get tools.
+    Returns True if MCP is ready or not started, False if timed out.
+    """
+    for attempt in range(max_retries):
+        try:
+            async def check_tools():
+                await asyncio.wait_for(mcp_toolset.get_tools(), timeout=2.0)
+            
+            loop.run_until_complete(check_tools())
+            if attempt > 0:
+                print(f"✅ MCP server ready after {attempt + 1} retries ({(attempt + 1) * delay}s)")
+            return True
+        except asyncio.TimeoutError:
+            # MCP is busy with long-running operation
+            if attempt == 0:
+                print("⏳ MCP server is busy with long-running operation, waiting for completion...")
+            elif attempt < max_retries - 1:
+                print(f"⏳ Still waiting... (attempt {attempt + 1}/{max_retries})")
+            time.sleep(delay)
+        except Exception as e:
+            # MCP not started yet or connection error - skip waiting
+            error_str = str(e).lower()
+            if "not responding" in error_str or "connection" in error_str or "failed to get tools" in error_str:
+                print(f"ℹ️  MCP server not running")
+                return True
+            # Other unexpected errors
+            if attempt < max_retries - 1:
+                print(f"⚠️  Unexpected error, retrying: {e}")
+                time.sleep(delay)
+    
+    print(f"❌ MCP server not responding after {max_retries * delay}s")
+    return False
+
 # --- Main Agent Function ---
 def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goals: bool = True, reset_threshold: int = 3) -> str:
     max_iterations = task_config["max_rounds"]
@@ -758,18 +791,12 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
     # Suppress verbose logging from base_authenticated_tool (it will cry that there is no auth config)
     logging.getLogger("google_adk.google.adk.tools.base_authenticated_tool").setLevel(logging.ERROR)
     
-    # Create generation config for the coder agent to limit token usage
-    coder_generation_config = genai.types.GenerateContentConfig(
-        temperature=0.3,
-        max_output_tokens=10000,  # Limit output tokens per iteration
-    )
-    
     # Create agent once - it will manage the MCP server subprocess
     coding_agent = LlmAgent(
         model=task_config["coder_model"],
         name='code_generator',
         instruction=system_instruction,
-        generate_content_config=coder_generation_config,
+        generate_content_config=llm_config_coder,
         planner=PlanReActPlanner(),
         tools=[
             McpToolset(
@@ -777,8 +804,9 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
                     server_params=StdioServerParameters(
                         command=sys.executable,
                         args=[mcp_script, project_path]
-                    )
-                )
+                    ),
+                    timeout=60  # Increase timeout to 60 seconds for long-running operations like execute_project
+                )            
             )
         ]
     )
@@ -810,8 +838,13 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
             )
 
             # Run coding stage with agent (pass loop and session_id)
-            if not code(task_config, context, agent_runner=coding_agent_runner, 
-                       session_id=iteration_session_id, loop=loop):
+            code_result = code(task_config, context, agent_runner=coding_agent_runner, 
+                       session_id=iteration_session_id, loop=loop)
+
+            # Wait for MCP server to complete any pending operations
+            wait_mcp_operation_complete(coding_agent.tools[0], loop)
+
+            if not code_result:
                 context.erase_iteration()
                 print("❌ Model generated some bad output, repeating iteration")
                 continue
