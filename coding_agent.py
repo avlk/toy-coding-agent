@@ -23,7 +23,7 @@ from google.genai import errors, types
 from google.adk.sessions import InMemorySessionService
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
-from google.adk.planners import PlanReActPlanner
+from google.adk.planners import PlanReActPlanner, BuiltInPlanner
 from google.adk.code_executors import BuiltInCodeExecutor
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, StdioConnectionParams, StdioServerParameters
 from patch import patch_code, is_unified_diff
@@ -125,7 +125,7 @@ class Context:
             
 
 llm_config_coder = genai.types.GenerateContentConfig(
-    temperature=1.0
+    temperature=0.3
 )
 
 llm_config_reviewer = genai.types.GenerateContentConfig(
@@ -375,17 +375,19 @@ def code(config: dict, context: Context, agent_runner, session_id: str, loop=Non
         # Process events as they arrive using async function
         responses = []
         final_answer = None
+        tool_calls_made = False
         
         async def process_agent_events():
-            nonlocal final_answer
+            nonlocal final_answer, tool_calls_made
             async for event in agent_runner.run_async(user_id=USER_ID, session_id=session_id, new_message=types.Content(role='user', parts=formatted_parts)):
                 # print(f"\nDEBUG EVENT: {event}\n")
-                if event.content:
+                if event.content and event.content.parts:
                     for part in event.content.parts:
                         if hasattr(part, 'text') and part.text:
                             responses.append(part.text)
                             print(f"🤖 {part.text}", flush=True)
                         if hasattr(part, 'function_call') and part.function_call:
+                            tool_calls_made = True
                             print(f"📢➡️ Function call: {part.function_call.name}", flush=True)
                         if hasattr(part, 'function_response') and part.function_response:
                             if part.function_response.response['isError']:
@@ -393,6 +395,7 @@ def code(config: dict, context: Context, agent_runner, session_id: str, loop=Non
                             else:
                                 response = "✅ Success"
                             print(f"📢↩️ Function response: {response}", flush=True)
+
                 if event.usage_metadata:
                     token_tracker.print_call_info(event.usage_metadata, 0)  # No time info here
                     token_tracker.record(config["coder_model"], event.usage_metadata, 0)
@@ -410,6 +413,12 @@ def code(config: dict, context: Context, agent_runner, session_id: str, loop=Non
         generation_time = end_time - start_time
         
         print("🧾 Processing agent output...")
+        
+        # Warn if no tools were called - agent likely just described actions
+        if not tool_calls_made:
+            print("⚠️  WARNING: Agent did not call any MCP tools! It may have just described actions without executing them.")
+            print("⚠️  This likely means no files were created. The agent needs to actually invoke create_file(), not just describe it.")
+        
         # Create a response dict compatible with existing code
         code_response = {
             "text": final_answer,
@@ -798,6 +807,10 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
         instruction=system_instruction,
         generate_content_config=llm_config_coder,
         planner=PlanReActPlanner(),
+        # planner=BuiltInPlanner(thinking_config=types.ThinkingConfig(
+        #     include_thoughts=True,
+        #     thinking_budget=15000,
+        # )),
         tools=[
             McpToolset(
                 connection_params=StdioConnectionParams(
