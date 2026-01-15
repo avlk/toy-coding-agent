@@ -125,7 +125,12 @@ class Context:
             
 
 llm_config_coder = genai.types.GenerateContentConfig(
-    temperature=0.3
+    temperature=1.0,
+    tool_config=genai.types.ToolConfig(
+        function_calling_config=genai.types.FunctionCallingConfig(
+            mode=genai.types.FunctionCallingConfigMode.ANY
+        )
+    )
 )
 
 llm_config_reviewer = genai.types.GenerateContentConfig(
@@ -381,28 +386,29 @@ def code(config: dict, context: Context, agent_runner, session_id: str, loop=Non
             nonlocal final_answer, tool_calls_made
             async for event in agent_runner.run_async(user_id=USER_ID, session_id=session_id, new_message=types.Content(role='user', parts=formatted_parts)):
                 # print(f"\nDEBUG EVENT: {event}\n")
-                if event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if hasattr(part, 'text') and part.text:
-                            responses.append(part.text)
-                            print(f"🤖 {part.text}", flush=True)
-                        if hasattr(part, 'function_call') and part.function_call:
-                            tool_calls_made = True
-                            print(f"📢➡️ Function call: {part.function_call.name}", flush=True)
-                        if hasattr(part, 'function_response') and part.function_response:
-                            if part.function_response.response['isError']:
-                                response = "❗Error"
-                            else:
-                                response = "✅ Success"
-                            print(f"📢↩️ Function response: {response}", flush=True)
-
-                if event.usage_metadata:
-                    token_tracker.print_call_info(event.usage_metadata, 0)  # No time info here
-                    token_tracker.record(config["coder_model"], event.usage_metadata, 0)
-                if event.is_final_response():
-                    final_answer = responses[-1] if responses else ""
-                    print("\n🟢 FINAL ANSWER\n", final_answer, "\n")
-        
+                try:
+                    if hasattr(event, 'content') and hasattr(event.content, 'parts') and event.content.parts:
+                        for part in event.content.parts:
+                            if hasattr(part, 'text') and part.text:
+                                responses.append(part.text)
+                                print(f"🤖 {part.text}", flush=True)
+                            if hasattr(part, 'function_call') and part.function_call:
+                                print(f"📢➡️ Function call: {part.function_call.name}", flush=True)
+                            if hasattr(part, 'function_response') and part.function_response:
+                                if part.function_response.response['isError']:
+                                    response = "❗Error"
+                                else:
+                                    response = "✅ Success"
+                                print(f"📢↩️ Function response: {response}", flush=True)
+                    if event.usage_metadata:
+                        token_tracker.print_call_info(event.usage_metadata, 0)  # No time info here
+                        token_tracker.record(config["coder_model"], event.usage_metadata, 0)
+                    if event.is_final_response():
+                        final_answer = responses[-1] if responses else ""
+                        print("\n🟢 FINAL ANSWER\n", final_answer, "\n")
+                except Exception as e:
+                    print(f"⚠️  Error processing agent event: {e}")
+                    print(f"\nDEBUG EVENT: {event}\n")
         # Run in the persistent event loop to reuse MCP connection
         if loop:
             loop.run_until_complete(process_agent_events())
