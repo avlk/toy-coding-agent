@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import logging
 import uuid
+import subprocess
 from pathlib import Path
 from google import genai
 from google.genai import errors, types
@@ -25,7 +26,7 @@ from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.adk.planners import PlanReActPlanner, BuiltInPlanner
 from google.adk.code_executors import BuiltInCodeExecutor
-from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, StdioConnectionParams, StdioServerParameters
+from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, StdioConnectionParams, StdioServerParameters, StreamableHTTPConnectionParams
 from patch import patch_code, is_unified_diff
 from sandbox_execution import execute_sandboxed
 from token_tracker import TokenUsageTracker
@@ -793,8 +794,32 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
     project_path = f"solutions/{filename}"
     os.makedirs(project_path, exist_ok=True)
     
-    print("\n🔌 Creating Gemini agent with MCP tools...")
+    print("\n🔌 Starting MCP server in HTTP mode...")
     mcp_script = os.path.join(os.path.dirname(__file__), "mcp_server.py")
+    mcp_host = "127.0.0.1"
+    mcp_port = 8000
+    
+    # Start MCP server as a subprocess in HTTP mode
+    mcp_process = subprocess.Popen(
+        [sys.executable, mcp_script, project_path, "--transport", "http", "--host", mcp_host, "--port", str(mcp_port)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    
+    # Verify server started successfully
+    print("⏳ Waiting for MCP server to start...")
+    for i in range(10):
+        time.sleep(0.5)
+        if mcp_process.poll() is not None:
+            # Process died
+            stdout, stderr = mcp_process.communicate()
+            print(f"❌ MCP server failed to start (exit code: {mcp_process.returncode})")
+            if stderr:
+                print(f"Error output: {stderr}")
+            raise RuntimeError(f"MCP server process exited prematurely")
+    
+    print(f"✅ MCP server running at http://{mcp_host}:{mcp_port}/mcp")
     
     # Build system instruction with context
     system_instruction_template = load_file("scripts/coder init.md")
@@ -806,7 +831,8 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
     # Suppress verbose logging from base_authenticated_tool (it will cry that there is no auth config)
     logging.getLogger("google_adk.google.adk.tools.base_authenticated_tool").setLevel(logging.ERROR)
     
-    # Create agent once - it will manage the MCP server subprocess
+    print("🔌 Creating Gemini agent with MCP tools...")
+    # Create agent once - it will connect to the HTTP MCP server
     coding_agent = LlmAgent(
         model=task_config["coder_model"],
         name='code_generator',
@@ -819,12 +845,11 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
         # )),
         tools=[
             McpToolset(
-                connection_params=StdioConnectionParams(
-                    server_params=StdioServerParameters(
-                        command=sys.executable,
-                        args=[mcp_script, project_path]
-                    ),
-                    timeout=60  # Increase timeout to 60 seconds for long-running operations like execute_project
+                connection_params=StreamableHTTPConnectionParams(
+                    url=f"http://{mcp_host}:{mcp_port}/mcp",
+                    timeout=60.0,
+                    sse_read_timeout=300.0,
+                    terminate_on_close=False  # We'll manage termination in finally block
                 )            
             )
         ]
@@ -908,6 +933,18 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
         # Close the event loop
         loop.close()
         print("🔌 Closed event loop and MCP connections")
+        
+        # Terminate MCP server
+        if 'mcp_process' in locals() and mcp_process:
+            print("🛑 Stopping MCP server...")
+            mcp_process.terminate()
+            try:
+                mcp_process.wait(timeout=5)
+                print("✅ MCP server stopped")
+            except subprocess.TimeoutExpired:
+                print("⚠️  MCP server did not stop gracefully, killing...")
+                mcp_process.kill()
+                mcp_process.wait()
 
     # Print token usage summary
     token_tracker.print_summary()
