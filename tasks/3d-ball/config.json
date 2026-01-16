@@ -1,8 +1,8 @@
 {
-  "coder_model": "gemini-flash-latest",
-  "reviewer_model": "gemini-3-pro-preview",
-  "utility_model": "gemini-flash-lite-latest",
-  "max_rounds": 25,
+  "coder_model": "gemini-2.5-flash-lite",
+  "reviewer_model": "gemini-2.5-flash-lite",
+  "utility_model": "gemini-2.5-flash-lite",
+  "max_rounds": 15,
   "basename": "ball3d",
   "sandbox_method": "auto",
   "commandline_args": ""
