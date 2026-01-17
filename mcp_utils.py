@@ -25,6 +25,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple, Any
 from fastmcp.exceptions import ToolError
+from patch import pattern_replace, multiline_replace
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
@@ -79,30 +80,33 @@ class ProjectFolder:
         Validate that a file path is within the project folder.
         
         Args:
-            file_path: Relative or absolute path to validate
+            file_path: Relative path (relative to project folder). Absolute paths are not allowed.
             
         Returns:
             Absolute Path object within the project folder
             
         Raises:
-            ProjectFolderError: If path is outside the project folder
+            ProjectFolderError: If path is absolute or outside the project folder
         """
-        # Convert to Path and resolve to absolute path
+        # Convert to Path
         if isinstance(file_path, str):
             file_path = Path(file_path)
         
-        # If relative, make it relative to project folder
-        if not file_path.is_absolute():
-            full_path = (self.project_path / file_path).resolve()
-        else:
-            full_path = file_path.resolve()
+        # Reject absolute paths
+        if file_path.is_absolute():
+            raise ProjectFolderError(
+                f"Absolute paths are not allowed. Use relative paths only: {file_path}"
+            )
+        
+        # Make it relative to project folder and resolve
+        full_path = (self.project_path / file_path).resolve()
         
         # Check if the path is within project folder
         try:
             full_path.relative_to(self.project_path)
         except ValueError:
             raise ProjectFolderError(
-                f"Path '{file_path}' is outside the project folder '{self.project_path}'"
+                f"Path '{file_path}' is outside the project folder"
             )
         
         return full_path
@@ -279,7 +283,7 @@ class ProjectFolder:
         Load and return the complete contents of a file.
         
         Args:
-            file_path: Path to the file (relative to project folder or absolute)
+            file_path: Relative path to the file (relative to project folder)
             
         Returns:
             Dictionary with:
@@ -321,7 +325,7 @@ class ProjectFolder:
         Create a new file with the given content.
         
         Args:
-            file_path: Path to the file (relative to project folder or absolute)
+            file_path: Relative path to the file (relative to project folder)
             content: Content to write to the file (string or list of lines)
             overwrite: If True, overwrite existing file. If False, fail if file exists. Default: False
             
@@ -417,7 +421,7 @@ class ProjectFolder:
         Remove a file from the project folder.
         
         Args:
-            file_path: Path to the file (relative to project folder or absolute)
+            file_path: Relative path to the file (relative to project folder)
             
         Returns:
             Relative path of the removed file
@@ -457,7 +461,7 @@ class ProjectFolder:
         Retrieve a specific range of lines from a file.
         
         Args:
-            file_path: Path to the file (relative to project folder or absolute)
+            file_path: Relative path to the file (relative to project folder)
             start_line: Starting line number (1-indexed, inclusive)
             end_line: Ending line number (1-indexed, inclusive)
             
@@ -593,6 +597,146 @@ class ProjectFolder:
         except Exception as e:
             raise ProjectFolderError(f"Search failed: {str(e)}")
     
+    def replace_in_files(
+        self,
+        pattern: str,
+        replacement: str,
+        is_regex: bool = False,
+        file_pattern: str = "*"
+    ) -> Dict[str, int]:
+        """
+        Search and replace a pattern across all matching files.
+        
+        For each file that matches the file_pattern, loads the file,
+        performs pattern replacement, and saves it if any replacements were made.
+        
+        Args:
+            pattern: String or regex pattern to search for
+            replacement: String to replace matches with
+            is_regex: If True, treat pattern as regex
+            file_pattern: Glob pattern for filtering which files to process
+            
+        Returns:
+            Dictionary mapping relative file path to number of replacements made
+            
+        Raises:
+            ProjectFolderError: If regex is invalid or operation fails
+        """
+        try:
+            results = {}
+            
+            # Validate regex pattern if needed
+            if is_regex:
+                try:
+                    re.compile(pattern)
+                except re.error as e:
+                    raise ProjectFolderError(f"Invalid regex pattern: {str(e)}")
+            
+            # Process each matching file
+            for file_path in self.project_path.rglob(file_pattern):
+                if not file_path.is_file() or self._is_excluded(file_path):
+                    continue
+                
+                try:
+                    # Load file
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        code_lines = [line.rstrip('\n\r') for line in f]
+                    
+                    # Perform replacement
+                    num_replacements = pattern_replace(code_lines, pattern, replacement, is_regex)
+                    
+                    # Save if replacements were made
+                    if num_replacements > 0:
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write('\n'.join(code_lines))
+                        
+                        # Clear cache for this file
+                        self._clear_metadata_cache(file_path)
+                        
+                        # Add to results
+                        rel_path = str(file_path.relative_to(self.project_path))
+                        results[rel_path] = num_replacements
+                        
+                        logger.info(f"replace_in_files({rel_path}): {num_replacements} replacement(s)")
+                
+                except (PermissionError, OSError, UnicodeDecodeError):
+                    # Skip files we can't read, decode, or write
+                    continue
+            
+            return results
+        
+        except ProjectFolderError:
+            raise
+        except Exception as e:
+            raise ProjectFolderError(f"Replace in files failed: {str(e)}")
+
+    def multiline_replace_in_file(
+        self,
+        file_path: str,
+        search_lines: List[str],
+        replace_lines: List[str],
+        only_around_line: Optional[int] = None
+    ) -> int:
+        """
+        Search and replace a multiline pattern in a specific file.
+        
+        Loads the file, performs multiline replacement, and saves it if any
+        replacements were made.
+        
+        Args:
+            file_path: Relative path to the file (relative to project folder)
+            search_lines: List of lines to search for (must match exactly)
+            replace_lines: List of lines to replace with
+            only_around_line: If not None, only replace the match closest to this line number (1-indexed)
+            
+        Returns:
+            Number of replacement operations performed
+            
+        Raises:
+            ProjectFolderError: If file not found or operation fails
+        """
+        try:
+            full_path = self._validate_path(file_path)
+            
+            if not full_path.exists():
+                raise ProjectFolderError(f"File not found: {file_path}")
+            
+            if not full_path.is_file():
+                raise ProjectFolderError(f"Path is not a file: {file_path}")
+            
+            # Load file
+            with open(full_path, 'r', encoding='utf-8') as f:
+                code_lines = [line.rstrip('\n\r') for line in f]
+            
+            # Convert 1-indexed to 0-indexed for only_around_line
+            around_line_0based = only_around_line - 1 if only_around_line is not None else None
+            
+            # Perform replacement
+            num_replacements = multiline_replace(code_lines, search_lines, replace_lines, around_line_0based)
+            
+            # Save if replacements were made
+            if num_replacements > 0:
+                with open(full_path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(code_lines))
+                
+                # Clear cache for this file
+                self._clear_metadata_cache(full_path)
+                
+                rel_path = str(full_path.relative_to(self.project_path))
+                logger.info(f"multiline_replace_in_file({rel_path}): {num_replacements} replacement(s)")
+            
+            return num_replacements
+        
+        except UnicodeDecodeError:
+            raise ProjectFolderError(f"File is not a text file: {file_path}")
+        except ProjectFolderError:
+            raise
+        except PermissionError:
+            raise ProjectFolderError(f"Permission denied: {file_path}")
+        except Exception as e:
+            raise ProjectFolderError(f"Multiline replace failed: {str(e)}")
+
+
     def find_python_definition(
         self, 
         name: str, 
