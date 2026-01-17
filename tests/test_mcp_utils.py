@@ -117,11 +117,11 @@ class TestPathValidation:
         assert result.is_absolute()
         assert result.name == "simple.txt"
     
-    def test_validate_path_with_absolute_path(self, project_folder):
-        """Test validation of absolute path within project."""
+    def test_validate_path_rejects_absolute_path(self, project_folder):
+        """Test that absolute paths are rejected."""
         abs_path = project_folder.project_path / "simple.txt"
-        result = project_folder._validate_path(str(abs_path))
-        assert result == abs_path
+        with pytest.raises(ProjectFolderError, match="Absolute paths are not allowed"):
+            project_folder._validate_path(str(abs_path))
     
     def test_validate_path_with_subdirectory(self, project_folder):
         """Test validation of path in subdirectory."""
@@ -136,7 +136,7 @@ class TestPathValidation:
     
     def test_validate_path_rejects_absolute_outside(self, project_folder):
         """Test that absolute path outside project is rejected."""
-        with pytest.raises(ProjectFolderError, match="outside the project folder"):
+        with pytest.raises(ProjectFolderError, match="Absolute paths are not allowed"):
             project_folder._validate_path("/etc/passwd")
     
     def test_validate_path_rejects_complex_traversal(self, project_folder):
@@ -820,6 +820,210 @@ class TestEdgeCases:
         
         load_result = pf.load_file("long_lines.txt")
         assert long_line in load_result['content']
+
+
+class TestReplaceInFiles:
+    """Tests for replace_in_files method."""
+    
+    def test_replace_in_files_substring(self, project_folder):
+        """Test substring replacement across multiple files."""
+        # Create test files
+        project_folder.create_file("file1.txt", "foo bar foo")
+        project_folder.create_file("file2.txt", "foo baz")
+        project_folder.create_file("file3.txt", "no match here")
+        
+        # Perform replacement
+        results = project_folder.replace_in_files("foo", "XXX", is_regex=False)
+        
+        # Check results
+        assert len(results) == 2
+        assert "file1.txt" in results
+        assert "file2.txt" in results
+        assert results["file1.txt"] == 2  # Two occurrences
+        assert results["file2.txt"] == 1  # One occurrence
+        
+        # Verify file contents
+        file1 = project_folder.load_file("file1.txt")
+        assert file1['content'] == ["XXX bar XXX"]
+        
+        file2 = project_folder.load_file("file2.txt")
+        assert file2['content'] == ["XXX baz"]
+        
+        file3 = project_folder.load_file("file3.txt")
+        assert file3['content'] == ["no match here"]
+    
+    def test_replace_in_files_regex(self, project_folder):
+        """Test regex replacement across files."""
+        project_folder.create_file("code1.py", "value = 123")
+        project_folder.create_file("code2.py", "count = 456")
+        
+        results = project_folder.replace_in_files(r"\d+", "NUM", is_regex=True)
+        
+        assert len(results) == 2
+        assert results["code1.py"] == 1
+        assert results["code2.py"] == 1
+        
+        code1 = project_folder.load_file("code1.py")
+        assert code1['content'] == ["value = NUM"]
+    
+    def test_replace_in_files_with_file_pattern(self, project_folder):
+        """Test replacement with file pattern filter."""
+        project_folder.create_file("test.py", "foo bar")
+        project_folder.create_file("test.txt", "foo bar")
+        project_folder.create_file("test.md", "foo bar")
+        
+        # Only replace in .py files
+        results = project_folder.replace_in_files("foo", "XXX", file_pattern="*.py")
+        
+        assert len(results) == 1
+        assert "test.py" in results
+        
+        # Verify other files unchanged
+        txt = project_folder.load_file("test.txt")
+        assert txt['content'] == ["foo bar"]
+    
+    def test_replace_in_files_no_matches(self, project_folder):
+        """Test replacement when no matches found."""
+        project_folder.create_file("test.txt", "hello world")
+        
+        results = project_folder.replace_in_files("foo", "bar")
+        
+        assert len(results) == 0
+    
+    def test_replace_in_files_invalid_regex(self, project_folder):
+        """Test that invalid regex raises error."""
+        with pytest.raises(ProjectFolderError, match="Invalid regex pattern"):
+            project_folder.replace_in_files("[invalid", "test", is_regex=True)
+    
+    def test_replace_in_files_multiple_lines(self, project_folder):
+        """Test replacement across multiple lines in same file."""
+        project_folder.create_file("multi.txt", "line1 foo\nline2 foo\nline3 bar")
+        
+        results = project_folder.replace_in_files("foo", "XXX")
+        
+        assert results["multi.txt"] == 2
+        
+        content = project_folder.load_file("multi.txt")
+        assert content['content'] == ["line1 XXX", "line2 XXX", "line3 bar"]
+
+
+class TestMultilineReplaceInFile:
+    """Tests for multiline_replace_in_file method."""
+    
+    def test_multiline_replace_basic(self, project_folder):
+        """Test basic multiline replacement."""
+        project_folder.create_file("test.txt", "line1\nline2\nline3\nline4")
+        
+        result = project_folder.multiline_replace_in_file(
+            "test.txt",
+            ["line2", "line3"],
+            ["replaced"]
+        )
+        
+        assert result == 1
+        
+        content = project_folder.load_file("test.txt")
+        assert content['content'] == ["line1", "replaced", "line4"]
+    
+    def test_multiline_replace_multiple_matches(self, project_folder):
+        """Test multiline replacement with multiple matches."""
+        project_folder.create_file("test.txt", "a\nb\nc\na\nb\nc")
+        
+        result = project_folder.multiline_replace_in_file(
+            "test.txt",
+            ["a", "b"],
+            ["x"]
+        )
+        
+        assert result == 2
+        
+        content = project_folder.load_file("test.txt")
+        assert content['content'] == ["x", "c", "x", "c"]
+    
+    def test_multiline_replace_with_only_around_line(self, project_folder):
+        """Test multiline replacement with only_around_line parameter."""
+        project_folder.create_file("test.txt", "a\nb\nc\na\nb\nc\na\nb")
+        
+        # Matches at lines 1, 4, 7; closest to line 5 is line 4
+        result = project_folder.multiline_replace_in_file(
+            "test.txt",
+            ["a", "b"],
+            ["x"],
+            only_around_line=5
+        )
+        
+        assert result == 1
+        
+        content = project_folder.load_file("test.txt")
+        assert content['content'] == ["a", "b", "c", "x", "c", "a", "b"]
+    
+    def test_multiline_replace_no_matches(self, project_folder):
+        """Test multiline replacement when no matches found."""
+        project_folder.create_file("test.txt", "line1\nline2\nline3")
+        
+        result = project_folder.multiline_replace_in_file(
+            "test.txt",
+            ["line5", "line6"],
+            ["replaced"]
+        )
+        
+        assert result == 0
+        
+        # Verify file unchanged
+        content = project_folder.load_file("test.txt")
+        assert content['content'] == ["line1", "line2", "line3"]
+    
+    def test_multiline_replace_file_not_found(self, project_folder):
+        """Test multiline replacement on non-existent file."""
+        with pytest.raises(ProjectFolderError, match="File not found"):
+            project_folder.multiline_replace_in_file(
+                "nonexistent.txt",
+                ["a"],
+                ["b"]
+            )
+    
+    def test_multiline_replace_expands_content(self, project_folder):
+        """Test multiline replacement that expands content."""
+        project_folder.create_file("test.txt", "line1\nline2\nline3")
+        
+        result = project_folder.multiline_replace_in_file(
+            "test.txt",
+            ["line2"],
+            ["new1", "new2", "new3"]
+        )
+        
+        assert result == 1
+        
+        content = project_folder.load_file("test.txt")
+        assert content['content'] == ["line1", "new1", "new2", "new3", "line3"]
+    
+    def test_multiline_replace_deletes_content(self, project_folder):
+        """Test multiline replacement that deletes content."""
+        project_folder.create_file("test.txt", "line1\nline2\nline3\nline4")
+        
+        result = project_folder.multiline_replace_in_file(
+            "test.txt",
+            ["line2", "line3"],
+            []
+        )
+        
+        assert result == 1
+        
+        content = project_folder.load_file("test.txt")
+        assert content['content'] == ["line1", "line4"]
+    
+    def test_multiline_replace_exact_match_required(self, project_folder):
+        """Test that multiline replacement requires exact match."""
+        project_folder.create_file("test.txt", "line1\nline2 extra\nline3")
+        
+        result = project_folder.multiline_replace_in_file(
+            "test.txt",
+            ["line2", "line3"],
+            ["replaced"]
+        )
+        
+        # Should not match because "line2" != "line2 extra"
+        assert result == 0
 
 
 if __name__ == "__main__":

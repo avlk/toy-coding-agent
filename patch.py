@@ -443,6 +443,118 @@ def patch_project(project_dir: Path, patch_lines: list[str], fuzziness: int = 0)
     return failures
 
 
+def pattern_replace(code_lines: list[str], pattern: str, replacement: str, is_regex: bool = False) -> int:
+    """
+    Find and replace a pattern in all lines of code.
+    
+    This function searches for a pattern (substring or regex) in each line
+    and replaces all occurrences. Works on individual lines only (not multi-line).
+    
+    Args:
+        code_lines: List of code lines to modify (modified in place)
+        pattern: Pattern to search for (substring or regex depending on is_regex)
+        replacement: String to replace matches with
+        is_regex: If True, treat pattern as regex; if False, treat as literal substring
+    
+    Returns:
+        Total number of replacements made across all lines
+    """
+    if not pattern:
+        logger.warning("Empty pattern provided")
+        return 0
+    
+    total_replacements = 0
+    
+    for i, line in enumerate(code_lines):
+        if is_regex:
+            # Count matches before replacement
+            matches = re.findall(pattern, line)
+            match_count = len(matches)
+            # Use regex substitution
+            new_line = re.sub(pattern, replacement, line)
+        else:
+            # Count occurrences for substring
+            match_count = line.count(pattern)
+            # Use simple string replacement
+            new_line = line.replace(pattern, replacement)
+        
+        # Update line if modified
+        if new_line != line:
+            code_lines[i] = new_line
+            total_replacements += match_count
+            logger.debug(f"Replaced {match_count} occurrence(s) in line {i}")
+    
+    if total_replacements > 0:
+        logger.info(f"Made {total_replacements} replacement(s)")
+    else:
+        logger.info("No matches found")
+    
+    return total_replacements
+
+
+def multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str], only_around_line: int | None = None) -> int:
+    """
+    Search for all occurrences of a sequence of strings and replace them.
+    
+    This function finds ALL matches first, then applies all replacements at once
+    to avoid recursive matching issues (e.g., searching for {b} and replacing 
+    with {a,b} would otherwise match infinitely).
+    
+    Args:
+        code_lines: List of code lines to modify (modified in place)
+        s_str: Sequence of strings to search for
+        r_str: Sequence of strings to replace with
+        only_around_line: If not None, only replace the match closest to this line number (0-based)
+    
+    Returns:
+        Number of replacement operations performed
+    """
+    if not s_str:
+        logger.warning("Empty search string provided")
+        return 0
+    
+    # Find all non-overlapping matches
+    matches = []
+    search_len = len(s_str)
+    i = 0
+    
+    while i <= len(code_lines) - search_len:
+        # Check if sequence matches at position i
+        match = True
+        for j in range(search_len):
+            if code_lines[i + j] != s_str[j]:
+                match = False
+                break
+        
+        if match:
+            matches.append(i)
+            logger.debug(f"Found match at line {i}")
+            # Skip past this match to avoid overlapping matches
+            i += search_len
+        else:
+            i += 1
+    
+    if not matches:
+        logger.info("No matches found")
+        return 0
+    
+    logger.info(f"Found {len(matches)} match(es)")
+    
+    # If only_around_line is specified, find the closest match
+    if only_around_line is not None:
+        closest_match = min(matches, key=lambda pos: abs(pos - only_around_line))
+        matches = [closest_match]
+        logger.info(f"Selected closest match at line {closest_match} (target line was {only_around_line})")
+    
+    # Apply all replacements in reverse order to maintain correct positions
+    # Going backwards means earlier replacements don't affect later positions
+    for match_pos in reversed(matches):
+        code_lines[match_pos:match_pos + search_len] = r_str
+    
+    logger.info(f"Applied {len(matches)} replacement(s)")
+    return len(matches)
+
+
 def patch_code(code_lines: list[str], patch_lines: list[str], fuzziness: int = 0):
     hunk_list = extract_hunks(patch_lines)
     logger.info(f"Extracted {len(hunk_list)} hunks:")
