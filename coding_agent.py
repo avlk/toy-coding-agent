@@ -32,6 +32,19 @@ from sandbox_execution import execute_sandboxed
 from token_tracker import TokenUsageTracker
 from utils import *
 
+
+def format_param_value(value):
+    """Format parameter values, showing 'N lines' for lists or multiline strings."""
+    if isinstance(value, list):
+        return f"[{len(value)} lines]"
+    elif isinstance(value, str) and '\n' in value:
+        line_count = value.count('\n') + 1
+        return f"<{line_count} lines>"
+    elif isinstance(value, str) and len(value) > 100:
+        return f"{value[:100]}..."
+    else:
+        return str(value)
+
 # Initialize Gemini LLM key
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
@@ -338,7 +351,7 @@ def research(config: dict, context: Context):
     context.research_summary = summary or "No research summary available."
     return True
 
-def code(config: dict, context: Context, agent_runner, session_id: str, loop=None):
+def code(config: dict, context: Context, agent_runner, session_id: str, loop=None, max_tokens: int = 250000):
 
     if context.previous:
         prompt = load_file("scripts/coder step.md")
@@ -381,10 +394,11 @@ def code(config: dict, context: Context, agent_runner, session_id: str, loop=Non
         # Process events as they arrive using async function
         responses = []
         final_answer = None
-        tool_calls_made = False
+        call_token_count = 0  # Track tokens in this specific call
+        token_limit_exceeded = False
         
         async def process_agent_events():
-            nonlocal final_answer, tool_calls_made
+            nonlocal final_answer, call_token_count, token_limit_exceeded
             async for event in agent_runner.run_async(user_id=USER_ID, session_id=session_id, new_message=types.Content(role='user', parts=formatted_parts)):
                 # print(f"\nDEBUG EVENT: {event}\n")
                 try:
@@ -394,16 +408,39 @@ def code(config: dict, context: Context, agent_runner, session_id: str, loop=Non
                                 responses.append(part.text)
                                 print(f"🤖 {part.text}", flush=True)
                             if hasattr(part, 'function_call') and part.function_call:
-                                print(f"📢➡️ Function call: {part.function_call.name}", flush=True)
+                                params_str = ", ".join(f"{k}={format_param_value(v)}" for k, v in part.function_call.args.items())
+                                print(f"📢➡️ Function call: {part.function_call.name}({params_str})", flush=True)
                             if hasattr(part, 'function_response') and part.function_response:
-                                if part.function_response.response['isError']:
-                                    response = "❗Error"
+                                resp_data = part.function_response.response
+                                # Check for 'success' key first, otherwise fall back to isError
+                                if 'success' in resp_data:
+                                    is_success = resp_data['success']
                                 else:
+                                    is_success = not resp_data.get('isError', False)
+                                
+                                if is_success:
                                     response = "✅ Success"
+                                else:
+                                    response = "❗Error"
+                                    if 'error' in resp_data:
+                                        response += f": {resp_data['error']}"
                                 print(f"📢↩️ Function response: {response}", flush=True)
                     if event.usage_metadata:
                         token_tracker.print_call_info(event.usage_metadata, 0)  # No time info here
                         token_tracker.record(config["coder_model"], event.usage_metadata, 0)
+                        
+                        # Track tokens in this call
+                        call_token_count += event.usage_metadata.total_token_count or 0
+                        
+                        # Check if we've exceeded the per-call token limit
+                        if call_token_count >= max_tokens and not token_limit_exceeded:
+                            print(f"\n⚠️  Token limit for this call reached: {call_token_count:,} / {max_tokens:,}")
+                            print("🛑 Stopping agent execution to prevent quality degradation")
+                            token_limit_exceeded = True
+                            # Set a final answer from what we have so far
+                            final_answer = responses[-1] if responses else "Token limit exceeded during execution"
+                            break  # Stop processing events
+                    
                     if event.is_final_response():
                         final_answer = responses[-1] if responses else ""
                         print("\n🟢 FINAL ANSWER\n", final_answer, "\n")
@@ -419,12 +456,11 @@ def code(config: dict, context: Context, agent_runner, session_id: str, loop=Non
         end_time = time.monotonic()
         generation_time = end_time - start_time
         
-        print("🧾 Processing agent output...")
+        # If token limit was exceeded, return False to retry with a fresh session
+        if token_limit_exceeded:
+            print("❌ Code generation exceeded token limit, will retry with fresh session")
         
-        # Warn if no tools were called - agent likely just described actions
-        if not tool_calls_made:
-            print("⚠️  WARNING: Agent did not call any MCP tools! It may have just described actions without executing them.")
-            print("⚠️  This likely means no files were created. The agent needs to actually invoke create_file(), not just describe it.")
+        print("🧾 Processing agent output...")
         
         # Create a response dict compatible with existing code
         code_response = {
@@ -453,7 +489,7 @@ def code(config: dict, context: Context, agent_runner, session_id: str, loop=Non
         project_path = f"solutions/{context.filename}"
         
         # Directories to skip when reading files
-        skip_dirs = {'.venv', '__pycache__', '.git', 'venv', 'env', '.tox', '.pytest_cache'}
+        skip_dirs = {'.venv', '__pycache__', '.git', 'venv', 'env', '.tox', '.pytest_cache', '.ruff_cache'}
         
         print("📝 Reading all files from project directory...")
         context.current.code = {}
@@ -750,7 +786,7 @@ def wait_mcp_operation_complete(mcp_toolset, loop, max_retries=20, delay=5):
     return False
 
 # --- Main Agent Function ---
-def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goals: bool = True, reset_threshold: int = 3) -> str:
+def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goals: bool = True, reset_threshold: int = 3, max_tokens_per_call: int = 250000) -> str:
     max_iterations = task_config["max_rounds"]
     
     print("\n🎯 Use Case:")
@@ -759,7 +795,7 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
     print(goals)
 
     # Print the task configuration
-    print(f"🛠️ Task Configuration: coder_model={task_config['coder_model']}, reviewer_model={task_config['reviewer_model']}, utility_model={task_config['utility_model']}, max_rounds={max_iterations}")
+    print(f"🛠️ Task Configuration: coder_model={task_config['coder_model']}, reviewer_model={task_config['reviewer_model']}, utility_model={task_config['utility_model']}, max_rounds={max_iterations}, max_tokens_per_call={max_tokens_per_call:,}")
 
     filename = create_filename(task_config["basename"])
     print(f"🔁 Base name is {filename} for this run")
@@ -883,7 +919,7 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
 
             # Run coding stage with agent (pass loop and session_id)
             code_result = code(task_config, context, agent_runner=coding_agent_runner, 
-                       session_id=iteration_session_id, loop=loop)
+                       session_id=iteration_session_id, loop=loop, max_tokens=max_tokens_per_call)
 
             # Wait for MCP server to complete any pending operations
             wait_mcp_operation_complete(coding_agent.tools[0], loop)
@@ -968,6 +1004,8 @@ if __name__ == "__main__":
     parser.add_argument("--reset", type=int, help="Number of unsuccessful operations before resetting the the last successful iteration")
     parser.add_argument("--no-reset", dest="reset", action="store_const", const=0,
                         help="Disable resetting on no progress")
+    parser.add_argument("--max-tokens-per-call", type=int, default=250000,
+                        help="Maximum tokens per single code() call before stopping (default: 250,000)")
     parser.set_defaults(refine_goals=True)
     parser.set_defaults(reset=3)
     args = parser.parse_args()
@@ -982,4 +1020,4 @@ if __name__ == "__main__":
     
     use_case_input = load_file(f"tasks/{config_name}/hl_spec.md")
     goals_input = load_file(f"tasks/{config_name}/ac.md")
-    run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals, reset_threshold=args.reset)
+    run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals, reset_threshold=args.reset, max_tokens_per_call=args.max_tokens_per_call)
