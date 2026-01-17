@@ -22,6 +22,8 @@ Date: December 28, 2025
 import os
 import re
 import logging
+import json
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple, Any
 from fastmcp.exceptions import ToolError
@@ -704,6 +706,10 @@ class ProjectFolder:
             if not full_path.is_file():
                 raise ProjectFolderError(f"Path is not a file: {file_path}")
             
+            # Check if file should be excluded
+            if self._is_excluded(full_path):
+                raise ProjectFolderError(f"File matches exclude patterns: {file_path}")
+            
             # Load file
             with open(full_path, 'r', encoding='utf-8') as f:
                 code_lines = [line.rstrip('\n\r') for line in f]
@@ -735,6 +741,114 @@ class ProjectFolder:
             raise ProjectFolderError(f"Permission denied: {file_path}")
         except Exception as e:
             raise ProjectFolderError(f"Multiline replace failed: {str(e)}")
+
+    def run_ruff_check(
+        self,
+        file_pattern: str = "**/*.py",
+        fix: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Run Ruff linter on project files and return structured results.
+        
+        Uses Ruff's JSON output format to return detailed linting information.
+        Ruff must be installed and available in PATH.
+        
+        Args:
+            file_pattern: Glob pattern for files to check (default: "**/*.py")
+            fix: If True, automatically fix fixable issues (default: False)
+            
+        Returns:
+            Dictionary with:
+                - issues: List of issue dictionaries, each containing:
+                    - file: Relative file path
+                    - line: Line number (1-indexed)
+                    - column: Column number (1-indexed)
+                    - code: Rule code (e.g., "F401", "E501")
+                    - message: Issue description
+                    - fixable: Whether the issue can be auto-fixed
+                - total_issues: Total number of issues found
+                - total_files: Number of files with issues
+                
+        Raises:
+            ProjectFolderError: If Ruff is not installed or execution fails
+        """
+        try:
+            # Build list of files to check
+            files_to_check = []
+            for file_path in self.project_path.rglob(file_pattern):
+                if file_path.is_file() and not self._is_excluded(file_path):
+                    files_to_check.append(str(file_path))
+            
+            if not files_to_check:
+                return {
+                    'issues': [],
+                    'total_issues': 0,
+                    'total_files': 0
+                }
+            
+            # Build ruff command
+            cmd = ['ruff', 'check', '--output-format', 'json']
+            if fix:
+                cmd.append('--fix')
+            cmd.extend(files_to_check)
+            
+            # Run ruff
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(self.project_path)
+            )
+            
+            # Ruff exits with non-zero if issues found, which is expected
+            if result.returncode not in [0, 1]:
+                # Check if ruff is not installed
+                if result.returncode == 127 or 'not found' in result.stderr.lower():
+                    raise ProjectFolderError("Ruff is not installed or not in PATH")
+                raise ProjectFolderError(f"Ruff execution failed: {result.stderr}")
+            
+            # Parse JSON output
+            if result.stdout:
+                ruff_output = json.loads(result.stdout)
+            else:
+                ruff_output = []
+            
+            # Convert to our format with relative paths
+            issues = []
+            files_with_issues = set()
+            
+            for issue in ruff_output:
+                file_path = Path(issue['filename'])
+                try:
+                    rel_path = str(file_path.relative_to(self.project_path))
+                except ValueError:
+                    rel_path = str(file_path)
+                
+                files_with_issues.add(rel_path)
+                
+                issues.append({
+                    'file': rel_path,
+                    'line': issue['location']['row'],
+                    'column': issue['location']['column'],
+                    'code': issue['code'],
+                    'message': issue['message'],
+                    'fixable': issue.get('fix', None) is not None
+                })
+            
+            logger.info(f"run_ruff_check: found {len(issues)} issue(s) in {len(files_with_issues)} file(s)")
+            
+            return {
+                'issues': issues,
+                'total_issues': len(issues),
+                'total_files': len(files_with_issues)
+            }
+        
+        except json.JSONDecodeError as e:
+            raise ProjectFolderError(f"Failed to parse Ruff output: {str(e)}")
+        except FileNotFoundError:
+            raise ProjectFolderError("Ruff is not installed or not in PATH")
+        except Exception as e:
+            raise ProjectFolderError(f"Ruff check failed: {str(e)}")
 
 
     def find_python_definition(
