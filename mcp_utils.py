@@ -759,6 +759,7 @@ class ProjectFolder:
             
         Returns:
             Dictionary with:
+                - success: Boolean - False if issues found or execution failed, True only if no issues
                 - issues: List of issue dictionaries, each containing:
                     - file: Relative file path
                     - line: Line number (1-indexed)
@@ -768,9 +769,11 @@ class ProjectFolder:
                     - fixable: Whether the issue can be auto-fixed
                 - total_issues: Total number of issues found
                 - total_files: Number of files with issues
+                - error: Error message (present if success=False)
                 
-        Raises:
-            ProjectFolderError: If Ruff is not installed or execution fails
+        Note:
+            Returns success=False and error="There were syntax issues" when linting issues are found.
+            Returns success=False with specific error when Ruff execution fails.
         """
         try:
             # Build list of files to check
@@ -804,8 +807,24 @@ class ProjectFolder:
             if result.returncode not in [0, 1]:
                 # Check if ruff is not installed
                 if result.returncode == 127 or 'not found' in result.stderr.lower():
-                    raise ProjectFolderError("Ruff is not installed or not in PATH")
-                raise ProjectFolderError(f"Ruff execution failed: {result.stderr}")
+                    error_msg = "Ruff is not installed or not in PATH"
+                    logger.error(error_msg)
+                    return {
+                        'success': False,
+                        'error': error_msg,
+                        'issues': [],
+                        'total_issues': 0,
+                        'total_files': 0
+                    }
+                error_msg = f"Ruff execution failed: {result.stderr}"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'issues': [],
+                    'total_issues': 0,
+                    'total_files': 0
+                }
             
             # Parse JSON output
             if result.stdout:
@@ -837,18 +856,50 @@ class ProjectFolder:
             
             logger.info(f"run_ruff_check: found {len(issues)} issue(s) in {len(files_with_issues)} file(s)")
             
-            return {
+            result = {
                 'issues': issues,
                 'total_issues': len(issues),
                 'total_files': len(files_with_issues)
             }
+            
+            if len(issues) > 0:
+                result['success'] = False
+                result['error'] = "There were syntax issues"
+            else:
+                result['success'] = True
+            
+            return result
         
         except json.JSONDecodeError as e:
-            raise ProjectFolderError(f"Failed to parse Ruff output: {str(e)}")
+            error_msg = f"Failed to parse Ruff output: {str(e)}"
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'error': error_msg,
+                'issues': [],
+                'total_issues': 0,
+                'total_files': 0
+            }
         except FileNotFoundError:
-            raise ProjectFolderError("Ruff is not installed or not in PATH")
+            error_msg = "Ruff is not installed or not in PATH"
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'error': error_msg,
+                'issues': [],
+                'total_issues': 0,
+                'total_files': 0
+            }
         except Exception as e:
-            raise ProjectFolderError(f"Ruff check failed: {str(e)}")
+            error_msg = f"Ruff check failed: {str(e)}"
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'error': error_msg,
+                'issues': [],
+                'total_issues': 0,
+                'total_files': 0
+            }
 
 
     def find_python_definition(

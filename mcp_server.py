@@ -32,17 +32,20 @@ import logging
 
 # Configure logging: all logs to file, only mcp_utils to console
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('./solutions/mcp_server_debug.log')
     ]
 )
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # Add console handler specifically for mcp_utils
 mcp_utils_logger = logging.getLogger('mcp_utils')
+mcp_utils_logger.setLevel(logging.DEBUG)
 console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
 console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 mcp_utils_logger.addHandler(console_handler)
 
@@ -68,7 +71,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
     
     # Expose list_files as MCP tool
     @mcp.tool()
-    def list_files(pattern: str = "*") -> list:
+    def list_files(pattern: str = "*") -> dict:
         """
         List all files in the project folder recursively.
         
@@ -77,10 +80,23 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                     Examples: "*.py" for Python files, "test_*.py" for test files
         
         Returns:
-            List of file metadata dictionaries (path, size_bytes, size_lines, mtime)
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded
+            - files: List of file metadata dictionaries (only present if success=True)
+            - error: Error message (only present if success=False)
         """
         logger.info(f"list_files(pattern={pattern!r}) called")
-        return pf.list_files(pattern=pattern)
+        try:
+            files = pf.list_files(pattern=pattern)
+            return {
+                'success': True,
+                'files': files
+            }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     # Expose load_file as MCP tool
     @mcp.tool()
@@ -94,11 +110,21 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-            - content: List of lines (line endings removed)
-            - metadata: File metadata (path, size_bytes, size_lines, mtime)
+            - success: Boolean indicating if operation succeeded
+            - content: List of lines (line endings removed, only present if success=True)
+            - metadata: File metadata (only present if success=True)
+            - error: Error message (only present if success=False)
         """
         logger.info(f"load_file({file_path!r}) called")
-        return pf.load_file(file_path)
+        try:
+            result = pf.load_file(file_path)
+            result['success'] = True
+            return result
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     # Expose create_file as MCP tool
     @mcp.tool()
@@ -115,25 +141,37 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-                - status: 'success', 'error', or 'no_change'
+                - success: Boolean indicating if operation succeeded
                 - message: Description of the result
-                - metadata: File metadata (only present on success or no_change)
-                - error: Error code (only present on error)
+                - metadata: File metadata (only present on success)
+                - error: Error message (only present if success=False)
         """
         logger.info(f"create_file({file_path!r}, overwrite={overwrite}) called")
         result = pf.create_file(file_path, content, overwrite=overwrite)
         
+        # Convert 'status' to 'success' for consistency
+        status = result.pop('status')
+        result['success'] = (status == 'success')
+        
+        # If status was 'no_change', still return success=True but keep message
+        if status == 'no_change':
+            result['success'] = True
+        
+        # If status was 'error', ensure error field exists
+        if status == 'error' and 'error' not in result:
+            result['error'] = result.get('message', 'Unknown error')
+        
         # Log the result status
-        if result['status'] == 'error':
-            logger.error(f"create_file failed: {result['message']}")
-        elif result['status'] == 'no_change':
+        if not result['success']:
+            logger.error(f"create_file failed: {result.get('message', result.get('error'))}")
+        elif status == 'no_change':
             logger.warning(f"create_file no change: {result['message']}")
         
         return result
     
     # Expose remove_file as MCP tool
     @mcp.tool()
-    def remove_file(file_path: str) -> str:
+    def remove_file(file_path: str) -> dict:
         """
         Remove a file from the project folder.
         
@@ -141,10 +179,23 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             file_path: Path to the file to remove (relative to project folder)
         
         Returns:
-            Path of removed file
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded
+            - path: Path of removed file (only present if success=True)
+            - error: Error message (only present if success=False)
         """
         logger.info(f"remove_file({file_path!r}) called")
-        return pf.remove_file(file_path)
+        try:
+            path = pf.remove_file(file_path)
+            return {
+                'success': True,
+                'path': path
+            }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     # Expose get_line_range as MCP tool
     @mcp.tool()
@@ -158,10 +209,22 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             end_line: Ending line number (1-indexed, inclusive)
         
         Returns:
-            Dictionary with the requested lines and metadata
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded
+            - lines: Requested lines (only present if success=True)
+            - metadata: File metadata (only present if success=True)
+            - error: Error message (only present if success=False)
         """
         logger.info(f"get_line_range({file_path!r}, start_line={start_line}, end_line={end_line}) called")
-        return pf.get_line_range(file_path, start_line, end_line)
+        try:
+            result = pf.get_line_range(file_path, start_line, end_line)
+            result['success'] = True
+            return result
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     # Expose search_files as MCP tool
     @mcp.tool()
@@ -170,7 +233,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         is_regex: bool = False,
         case_sensitive: bool = True,
         file_pattern: str = "*"
-    ) -> list:
+    ) -> dict:
         """
         Search for a string or regex pattern across all files in the project.
         
@@ -182,19 +245,32 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                          Examples: "*.py", "src/**/*.js"
         
         Returns:
-            List of matches containing file, line_number, and line content
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded
+            - matches: List of matches containing file, line_number, and line content (only present if success=True)
+            - error: Error message (only present if success=False)
         """
         logger.info(f"search_files(pattern={pattern!r}, is_regex={is_regex}, case_sensitive={case_sensitive}, file_pattern={file_pattern!r}) called")
-        return pf.search_files(
-            pattern=pattern,
-            is_regex=is_regex,
-            case_sensitive=case_sensitive,
-            file_pattern=file_pattern
-        )
+        try:
+            matches = pf.search_files(
+                pattern=pattern,
+                is_regex=is_regex,
+                case_sensitive=case_sensitive,
+                file_pattern=file_pattern
+            )
+            return {
+                'success': True,
+                'matches': matches
+            }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     # Expose find_python_definition as MCP tool
     @mcp.tool()
-    def find_python_definition(name: str, def_type: Optional[str] = None) -> list:
+    def find_python_definition(name: str, def_type: Optional[str] = None) -> dict:
         """
         Find Python class or function/method definitions by name.
         
@@ -207,15 +283,28 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                      Use None (default) to find any type
         
         Returns:
-            List of definitions containing:
-            - type: 'class', 'function', or 'method'
-            - name: name of the definition
-            - file: relative file path
-            - start_line and end_line: location in file
-            - text: full source code of the definition
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded (always True unless error)
+            - definitions: List of definitions containing:
+                - type: 'class', 'function', or 'method'
+                - name: name of the definition
+                - file: relative file path
+                - start_line and end_line: location in file
+                - text: full source code of the definition
+            - error: Error message (only present if success=False)
         """
         logger.info(f"find_python_definition(name={name!r}, def_type={def_type!r}) called")
-        return pf.find_python_definition(name=name, def_type=def_type)
+        try:
+            definitions = pf.find_python_definition(name=name, def_type=def_type)
+            return {
+                'success': True,
+                'definitions': definitions
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     # Expose run_ruff_check as MCP tool
     @mcp.tool()
@@ -234,6 +323,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
+            - success: Boolean - False if issues found or execution failed, True only if no issues
             - issues: List of issue dictionaries, each containing:
                 - file: Relative file path
                 - line: Line number (1-indexed)
@@ -243,6 +333,11 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                 - fixable: Boolean indicating if issue can be auto-fixed
             - total_issues: Total number of issues found across all files
             - total_files: Number of files containing at least one issue
+            - error: Error message (present if success=False)
+        
+        Note:
+            Returns success=False and error="There were syntax issues" when linting issues are found.
+            Returns success=False with specific error when Ruff execution fails (e.g., not installed).
         
         Common rule codes:
         - F401: Unused import
