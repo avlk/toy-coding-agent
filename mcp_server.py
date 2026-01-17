@@ -217,6 +217,42 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         logger.info(f"find_python_definition(name={name!r}, def_type={def_type!r}) called")
         return pf.find_python_definition(name=name, def_type=def_type)
     
+    # Expose run_ruff_check as MCP tool
+    @mcp.tool()
+    def run_ruff_check(file_pattern: str = "**/*.py", fix: bool = False) -> dict:
+        """
+        Run Ruff linter on project files and return structured linting results.
+        
+        Analyzes Python files for code quality issues, style violations, and potential bugs.
+        Requires Ruff to be installed and available in PATH.
+        
+        Args:
+            file_pattern: Glob pattern for files to check (default: "**/*.py")
+                         Examples: "**/*.py" (all Python files), "src/**/*.py" (only src folder)
+            fix: If True, automatically fix fixable issues (default: False)
+                WARNING: Enabling fix will modify files directly
+        
+        Returns:
+            Dictionary with:
+            - issues: List of issue dictionaries, each containing:
+                - file: Relative file path
+                - line: Line number (1-indexed)
+                - column: Column number (1-indexed)
+                - code: Rule code (e.g., "F401" for unused import, "E501" for line too long)
+                - message: Human-readable description of the issue
+                - fixable: Boolean indicating if issue can be auto-fixed
+            - total_issues: Total number of issues found across all files
+            - total_files: Number of files containing at least one issue
+        
+        Common rule codes:
+        - F401: Unused import
+        - F841: Unused variable
+        - E501: Line too long
+        - W291: Trailing whitespace
+        """
+        logger.info(f"run_ruff_check(file_pattern={file_pattern!r}, fix={fix!r}) called")
+        return pf.run_ruff_check(file_pattern=file_pattern, fix=fix)
+    
     # Expose patch_project as MCP tool
     @mcp.tool()
     def apply_patch(patch_content: str) -> dict:
