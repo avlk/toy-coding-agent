@@ -44,8 +44,7 @@ The number of test programs shall be kept reasonable (preferably below 100) to n
 Minimize test program number by combining multiple tests into one where possible.
 Minimize test program length to save program size and do not insert comments into test cases.
 
-An embedded markdown documentation of the language syntax and features shall be provided as a multi-line string variable called LANGUAGE_SPECIFICATION.
-
+An embedded markdown documentation of the language syntax and features shall be provided.
 When run from command line with "--syntax" flag, the program shall print this documentation to stdout and exit.
 
 Make sure that the interpreter compiles and runs the test programs before submitting the result.
