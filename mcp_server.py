@@ -430,6 +430,131 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             logger.exception("Unexpected error during patch application")
             raise ToolError(f"System error during patch application: {str(e)}")
     
+    # Expose replace_in_files as MCP tool
+    @mcp.tool()
+    def replace_in_files(
+        pattern: str,
+        replacement: str,
+        is_regex: bool = False,
+        file_pattern: str = "*"
+    ) -> dict:
+        """
+        Search and replace a pattern across all matching files.
+        
+        For each file that matches the file_pattern, loads the file,
+        performs pattern replacement, and saves it if any replacements were made.
+        
+        Args:
+            pattern: String or regex pattern to search for
+            replacement: String to replace matches with
+            is_regex: If True, treat pattern as regex (default: False)
+            file_pattern: Glob pattern for filtering which files to process (default: "*")
+        
+        Returns:
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded
+            - replacements: Dictionary mapping relative file path to number of replacements made
+            - error: Error message (only present if success=False)
+        """
+        logger.info(f"replace_in_files(pattern={pattern!r}, replacement={replacement!r}, is_regex={is_regex}, file_pattern={file_pattern!r}) called")
+        try:
+            replacements = pf.replace_in_files(pattern, replacement, is_regex, file_pattern)
+            total_replacements = sum(replacements.values())
+            
+            if total_replacements == 0:
+                return {
+                    'success': False,
+                    'error': 'No matches found for the pattern',
+                    'replacements': replacements
+                }
+            
+            return {
+                'success': True,
+                'replacements': replacements
+            }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    # Expose multiline_replace_in_file as MCP tool
+    @mcp.tool()
+    def multiline_replace_in_file(
+        file_path: str,
+        search_lines: list[str],
+        replace_lines: list[str],
+        only_around_line: Optional[int] = None
+    ) -> dict:
+        """
+        Search and replace a multiline pattern in a specific file.
+        
+        Loads the file, performs multiline replacement, and saves it if any
+        replacements were made.
+        
+        Args:
+            file_path: Relative path to the file (relative to project folder)
+            search_lines: List of lines to search for (must match exactly)
+            replace_lines: List of lines to replace with
+            only_around_line: If not None, only replace the match closest to this line number (1-indexed)
+        
+        Returns:
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded
+            - replacements: Number of replacement operations performed
+            - error: Error message (only present if success=False)
+        """
+        logger.info(f"multiline_replace_in_file(file_path={file_path!r}, search_lines={len(search_lines)} lines, replace_lines={len(replace_lines)} lines, only_around_line={only_around_line}) called")
+        
+        # Log exact search strings for debugging
+        for i, line in enumerate(search_lines):
+            logger.debug(f"search_lines[{i}] = {line!r}")
+        
+        try:
+            replacements = pf.multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)
+            if replacements == 0:
+                # Enhanced error: show what was searched and what's in the file
+                try:
+                    full_path = pf.project_path / file_path
+                    with open(full_path, 'r', encoding='utf-8') as f:
+                        file_lines = [line.rstrip('\n\r') for line in f]
+                    
+                    error_details = "No matches found.\n\nSearched for:\n"
+                    for i, line in enumerate(search_lines):
+                        error_details += f"  Line {i+1}: <{line}>\n"
+                    
+                    # Try to find similar content
+                    error_details += "\n"
+                    if len(search_lines) == 1:
+                        # For single line, show all lines containing partial match
+                        partial_match = search_lines[0].strip()[:20] if search_lines[0].strip() else None
+                        if partial_match:
+                            matches_found = []
+                            for line_no, line in enumerate(file_lines, 1):
+                                if partial_match in line:
+                                    matches_found.append(f"  Line {line_no}: <{line}>")
+                            if matches_found:
+                                error_details += f"Lines containing '{partial_match}':\n" + "\n".join(matches_found[:5])
+                    
+                except Exception as e:
+                    error_details = f'No matches found for the pattern. Debug error: {e}'
+                
+                return {
+                    'success': False,
+                    'error': error_details,
+                    'replacements': replacements
+                }
+            else:
+                return {
+                    'success': True,
+                    'replacements': replacements
+                }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     # Expose execute_sandboxed as MCP tool
     @mcp.tool()
     def execute_project(cmd_args: str, timeout: int = 30) -> dict:
