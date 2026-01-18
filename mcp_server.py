@@ -513,31 +513,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         try:
             replacements = pf.multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)
             if replacements == 0:
-                # Enhanced error: show what was searched and what's in the file
-                try:
-                    full_path = pf.project_path / file_path
-                    with open(full_path, 'r', encoding='utf-8') as f:
-                        file_lines = [line.rstrip('\n\r') for line in f]
-                    
-                    error_details = "No matches found.\n\nSearched for:\n"
-                    for i, line in enumerate(search_lines):
-                        error_details += f"  Line {i+1}: <{line}>\n"
-                    
-                    # Try to find similar content
-                    error_details += "\n"
-                    if len(search_lines) == 1:
-                        # For single line, show all lines containing partial match
-                        partial_match = search_lines[0].strip()[:20] if search_lines[0].strip() else None
-                        if partial_match:
-                            matches_found = []
-                            for line_no, line in enumerate(file_lines, 1):
-                                if partial_match in line:
-                                    matches_found.append(f"  Line {line_no}: <{line}>")
-                            if matches_found:
-                                error_details += f"Lines containing '{partial_match}':\n" + "\n".join(matches_found[:5])
-                    
-                except Exception as e:
-                    error_details = f'No matches found for the pattern. Debug error: {e}'
+                error_details = "No matches found. Check that search_lines is a list of exact lines to match. Do not format, adjust or escape them in any way."
                 
                 return {
                     'success': False,
