@@ -857,7 +857,7 @@ class TestReplaceInFiles:
         project_folder.create_file("code1.py", "value = 123")
         project_folder.create_file("code2.py", "count = 456")
         
-        results = project_folder.replace_in_files(r"\d+", "NUM", is_regex=True)
+        results = project_folder.replace_in_files(r"\d+", "NUM", is_regex=True, file_pattern="code*.py")
         
         assert len(results) == 2
         assert results["code1.py"] == 1
@@ -868,18 +868,18 @@ class TestReplaceInFiles:
     
     def test_replace_in_files_with_file_pattern(self, project_folder):
         """Test replacement with file pattern filter."""
-        project_folder.create_file("test.py", "foo bar")
-        project_folder.create_file("test.txt", "foo bar")
-        project_folder.create_file("test.md", "foo bar")
+        project_folder.create_file("mytest.py", "foo bar")
+        project_folder.create_file("mytest.txt", "foo bar")
+        project_folder.create_file("mytest.md", "foo bar")
         
         # Only replace in .py files
-        results = project_folder.replace_in_files("foo", "XXX", file_pattern="*.py")
+        results = project_folder.replace_in_files("foo", "XXX", file_pattern="**/*.py")
         
         assert len(results) == 1
-        assert "test.py" in results
+        assert "mytest.py" in results
         
         # Verify other files unchanged
-        txt = project_folder.load_file("test.txt")
+        txt = project_folder.load_file("mytest.txt")
         assert txt['content'] == ["foo bar"]
     
     def test_replace_in_files_no_matches(self, project_folder):
