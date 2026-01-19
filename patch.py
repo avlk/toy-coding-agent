@@ -555,6 +555,62 @@ def multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str],
     return len(matches)
 
 
+def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str], around_line: int) -> int | None:
+    """
+    Find a close match for sequence of strings around specified position and replace them.
+    
+    This function finds a match to s_str close to around_line, then applies the replacement (r_str).
+    The match allows for some differences (fuzziness).
+
+    Args:
+        code_lines: List of code lines to modify (modified in place)
+        s_str: Sequence of strings to do an approximate match for
+        r_str: Sequence of strings to replace with
+        around_line: Replace the match closest to this line number (0-based)
+    
+    Returns:
+        True matching line number where a replacement was made, None otherwise
+    """
+    if not s_str:
+        logger.warning("Empty search string provided")
+        return None
+    
+    # starting line tolerance
+    TOLERANCE = 5
+    # Maximum summary Levenshtein distance error
+    MAX_DISTANCE = 5
+
+    # Starting line boundaries
+    search_len = len(s_str)
+    start_search = max(0, around_line - TOLERANCE)
+    end_search = min(len(code_lines) - search_len, around_line + TOLERANCE)  + 1
+    match_index = -1
+    match_distance = MAX_DISTANCE + 1
+
+    # Find all non-overlapping matches
+    for i in range(start_search, end_search):
+        # Check if sequence matches at position i
+        distance = sum(Levenshtein.distance(code_lines[i + j], s_str[j]) for j in range(search_len))
+        
+        if distance <= MAX_DISTANCE:
+            logger.debug(f"Found match at line {i} with distance {distance}")
+            if distance < match_distance:
+                match_distance = distance
+                match_index = i
+    
+    if match_index == -1:
+        logger.info("No matches found")
+        return None
+    
+    logger.info(f"Found match at line {match_index} with distance {match_distance}")
+        
+    # Apply all replacements in reverse order to maintain correct positions
+    # Going backwards means earlier replacements don't affect later positions
+    code_lines[match_index:match_index + search_len] = r_str
+    
+    logger.info(f"Applied 1 replacement at line {match_index}")
+    return match_index
+
 def patch_code(code_lines: list[str], patch_lines: list[str], fuzziness: int = 0):
     hunk_list = extract_hunks(patch_lines)
     logger.info(f"Extracted {len(hunk_list)} hunks:")
