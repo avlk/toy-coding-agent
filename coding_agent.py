@@ -301,7 +301,28 @@ def mcp_toolset_to_function_declarations(mcp_toolset: McpToolset) -> tuple[list,
     
     if function_declarations:
         print(f"✅ Converted {len(function_declarations)} MCP tools to function declarations")
-    
+
+    # Add built-in 'finish' function declaration
+    finish_decl = genai.types.FunctionDeclaration(
+        name="finish",
+        description="Signal that the agent is done and return a summary/result string.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Summary of the completed iteration."
+                }
+            },
+            "required": ["summary"]
+        }
+    )
+    function_declarations.append(finish_decl)
+
+    # print("MCP function declarations:")
+    # for func_decl in function_declarations:
+    #     print(f" - {func_decl.name}: {func_decl.description}, params: {(func_decl.parameters)}")
+    # print("MCP tool map keys:", list(tool_map.keys()))
     return function_declarations, tool_map
 
 
@@ -404,6 +425,7 @@ class ProjectSubAgent:
                                                 print(f"<{line}>")
                 # Track usage metadata
                 if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
+                    print("\n🧾 Token usage so far:")
                     total_usage = chunk.usage_metadata
             
             print()  # New line after streaming output
@@ -439,6 +461,12 @@ class ProjectSubAgent:
             for fc in function_calls:
                 try:
                     # Get the MCPTool object for this function
+                    if fc.name == "finish":
+                        # Terminate iteration, capture summary
+                        summary = fc.args.get("summary", "")
+                        print(f"🟢 Finish called. Summary: {summary}")
+                        return {"text": summary, "full": None, "usage": total_usage, "response_time": generation_time}
+
                     if fc.name not in self.mcp_tool_map:
                         raise ValueError(f"Tool {fc.name} not found in tool map")
                     
@@ -473,7 +501,7 @@ class ProjectSubAgent:
                         if 'error' in function_response:
                             response += f": {function_response['error']}"
                     print(f"📢↩️ Function response: {response}", flush=True)                    
-
+                    print(f"Full response: {json.dumps(result)[:500]}", flush=True)
                 except Exception as e:
                     function_response_parts.append({
                         "function_response": {
@@ -1350,18 +1378,20 @@ You are a top grade syntax fixing agent. Your task is to fix any syntax errors i
 You don't need to understand the full program logic, just fix the syntax issues.
 
 You have to use MCP tools to accomplish your task:
-- first use `run_ruff_check()` to identify errors,
+- first use `run_ruff_check()` to identify errors. If there are errors, the response will contain an `issues` list with file paths and line numbers.
+- then analyze the errors and fix them using the following approach:
 - summarize the errors, group them by file and then group errors that have close line numbers together
 - for each file with errors, read the relevant lines using `get_line_range` to understand the context of the error. 
-  Make sure to read a few lines before and after the error lines to get full context.
-- then imagine a most possible root cause for each group of errors, since many errors at the same line or adjacent lines are likely introduced by just one error.
+  Make sure to read a 10 lines before and 10 lines after the error lines to get full context.
+- then imagine the most possible root cause for each group of errors, since many errors at the same line or adjacent lines are likely introduced by just one error.
 - fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` or `multiline_replace_in_file` for small fixes.
 - only if the error is widespread (like wrong indentation across many lines), use bulk refactoring using `replace_in_files` with regex patterns. 
 - For targeted edits, use `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` and `replace_in_files(pattern, replacement, is_regex, file_pattern)`
 - If `fuzzy_replace_in_file` fails multiple times, try to achieve the same with `replace_in_files` and regex patterns.
 - For bulk refactoring (like renaming variables), use `replace_in_files(pattern, replacement, is_regex, file_pattern)`
 - After making edits, use `run_ruff_check()` again to verify fixes.
-- When `run_ruff_check()` returns no issues, stop and return your summary as described in the Response Format. Do not call any more functions.
+- When you call `run_ruff_check()`, check the response. If it contains 'success': True, this means there are no syntax errors.
+- When there are no syntax errors, you MUST call `finish(summary_text)` to end your work and return your summary. Do not output your summary in any other way.
 
 Your tools:
 - `list_files()` - List files in the project.
@@ -1375,7 +1405,8 @@ Your tools:
 - `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` - Forgiving tool for multiline replacement in files. Will find a close match for `search_lines` (list of strings) around line `around_line`, and replace the match with `replace_lines`. Use it for small edits, such as syntax error fixes.
 - `multiline_replace_in_file(file_path, search_lines, replace_lines)` - Search and replace a matching line sequence with another line sequence in a specific file. Returns number of replacements made.
 - `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)` - Extended multiline replacement. If `only_around_line` is specified (1-indexed line number), only replaces the match closest to that line. Use it to only make one replacement around specific location.
-- `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues (WARNING: modifies files). Returns dict with 'issues' list, 'total_issues', and 'total_files'.
+- `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues (WARNING: modifies files). Returns dict with 'success' status, and if 'success' is false, 'error' message, and 'issues' list.
+- `finish(summary_text)` - Call this function to finish the task and return the final summary.
 
 ## Response Format
 Your response is a summary of your work. Structure it as follows:
@@ -1388,7 +1419,7 @@ Your response is a summary of your work. Structure it as follows:
 
     try:
         subagent = ProjectSubAgent(
-            model="gemini-2.5-flash-lite", 
+            model="gemini-2.5-flash", 
             base_config=llm_config, 
             system_instruction=system_instruction, 
             mcp_toolset=mcp.get_toolset(),

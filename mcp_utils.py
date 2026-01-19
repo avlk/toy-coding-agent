@@ -834,20 +834,19 @@ class ProjectFolder:
         Returns:
             Dictionary with:
                 - success: Boolean - False if issues found or execution failed, True only if no issues
-                - issues: List of issue dictionaries, each containing:
+                - error: Error message (present if success=False)
+                - issues: List of issue dictionaries, if there were any. Each issue contains:
                     - file: Relative file path
                     - line: Line number (1-indexed)
                     - column: Column number (1-indexed)
                     - code: Rule code (e.g., "F401", "E501")
                     - message: Issue description
                     - fixable: Whether the issue can be auto-fixed
-                - total_issues: Total number of issues found
-                - total_files: Number of files with issues
-                - error: Error message (present if success=False)
-                
+
         Note:
             Returns success=False and error="There were syntax issues" when linting issues are found.
             Returns success=False with specific error when Ruff execution fails.
+            Returns success=True when there are no issues.
         """
         try:
             # Build list of files to check
@@ -885,19 +884,13 @@ class ProjectFolder:
                     logger.error(error_msg)
                     return {
                         'success': False,
-                        'error': error_msg,
-                        'issues': [],
-                        'total_issues': 0,
-                        'total_files': 0
+                        'error': error_msg
                     }
                 error_msg = f"Ruff execution failed: {result.stderr}"
                 logger.error(error_msg)
                 return {
                     'success': False,
-                    'error': error_msg,
-                    'issues': [],
-                    'total_issues': 0,
-                    'total_files': 0
+                    'error': error_msg
                 }
             
             # Parse JSON output
@@ -930,18 +923,16 @@ class ProjectFolder:
             
             logger.info(f"run_ruff_check: found {len(issues)} issue(s) in {len(files_with_issues)} file(s)")
             
-            result = {
-                'issues': issues,
-                'total_issues': len(issues),
-                'total_files': len(files_with_issues)
-            }
+
             
             if len(issues) > 0:
-                result['success'] = False
-                result['error'] = "There were syntax issues"
+                result = {
+                    'success': False,
+                    'error': "There were syntax issues",
+                    'issues': issues
+                }                
             else:
-                result['success'] = True
-            
+                result = {'success': True}
             return result
         
         except json.JSONDecodeError as e:
