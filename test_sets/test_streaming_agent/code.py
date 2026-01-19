@@ -26,7 +26,7 @@ def interpreter_main(program_string):
                 return 123
             elif "read_int()" in program_string:
                 # Simulate reading an integer
-                return 456
+                return 456x # LOC6
             else:
                 return "Execution finished without specific output."
         except Exception as e:
@@ -178,7 +178,7 @@ print(x);",
                 "name": test["name"],
                 "status": "ERROR",
                 "expected": test["expected_output"],
-                "actual": f"Runtime error: {e}"+
+                "actual": f"Runtime error: {e}"+ # LOC3
             })
             print(f"Test Error: {e}\n")
 
@@ -193,7 +193,7 @@ print(x);",
         if test_result["status"] != "PASS":
             print(f"Details for {test_result['name']} ({test_result['status']}):")
             print(f"  Expected: {test_result['expected']}")
-            print(f"  Actual:   {test_result['actual']}")
+            print(f"  Actual:   {test_xesult['actual']}") # LOC5
             print("-" * 20)
 
     return results

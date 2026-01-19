@@ -1342,7 +1342,7 @@ def test_streaming_agent():
     mcp.start()
 
     llm_config = genai.types.GenerateContentConfig(
-        temperature=0
+        temperature=1.0
     )
 
     system_instruction = """
@@ -1351,10 +1351,15 @@ You don't need to understand the full program logic, just fix the syntax issues.
 
 You have to use MCP tools to accomplish your task:
 - first use `run_ruff_check()` to identify errors,
-- then READ files with errors using `get_line_range`, then fix with TARGETED edits. 
+- summarize the errors, group them by file and then group errors that have close line numbers together
+- for each file with errors, read the relevant lines using `get_line_range` to understand the context of the error. 
+  Make sure to read a few lines before and after the error lines to get full context.
+- then imagine a most possible root cause for each group of errors, since many errors at the same line or adjacent lines are likely introduced by just one error.
+- fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` or `multiline_replace_in_file` for small fixes.
+- only if the error is widespread (like wrong indentation across many lines), use bulk refactoring using `replace_in_files` with regex patterns. 
+- For targeted edits, use `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` and `replace_in_files(pattern, replacement, is_regex, file_pattern)`
+- If `fuzzy_replace_in_file` fails multiple times, try to achieve the same with `replace_in_files` and regex patterns.
 - For bulk refactoring (like renaming variables), use `replace_in_files(pattern, replacement, is_regex, file_pattern)`
-- For targeted edits, use `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)` and `replace_in_files(pattern, replacement, is_regex, file_pattern)`
-- If `multiline_replace_in_file` fails multiple times, try to achieve the same with `replace_in_files` and regex patterns.
 - After making edits, use `run_ruff_check()` again to verify fixes.
 - When `run_ruff_check()` returns no issues, stop and return your summary as described in the Response Format. Do not call any more functions.
 
@@ -1367,6 +1372,7 @@ Your tools:
 - `replace_in_files(pattern, replacement, is_regex=False, file_pattern)` - Extended `replace_in_files` call, where `file_pattern` filters which files to process (e.g., "*.py").
 - `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, where pattern is treated as regex and replacement may have backreferences.
 - `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, pattern is treated as regex and replacement may have backreferences, and `file_pattern` filters which files to process (e.g., "*.py").
+- `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` - Forgiving tool for multiline replacement in files. Will find a close match for `search_lines` (list of strings) around line `around_line`, and replace the match with `replace_lines`. Use it for small edits, such as syntax error fixes.
 - `multiline_replace_in_file(file_path, search_lines, replace_lines)` - Search and replace a matching line sequence with another line sequence in a specific file. Returns number of replacements made.
 - `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)` - Extended multiline replacement. If `only_around_line` is specified (1-indexed line number), only replaces the match closest to that line. Use it to only make one replacement around specific location.
 - `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues (WARNING: modifies files). Returns dict with 'issues' list, 'total_issues', and 'total_files'.
@@ -1392,6 +1398,7 @@ Your response is a summary of your work. Structure it as follows:
                 "search_files",
                 "find_python_definition",
                 "replace_in_files",
+                "fuzzy_replace_in_file",
                 "multiline_replace_in_file",
                 "run_ruff_check"
             ]

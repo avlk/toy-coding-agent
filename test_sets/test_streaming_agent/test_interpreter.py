@@ -21,7 +21,7 @@ class TestCLikeInterpreter(unittest.TestCase):
         # We will capture the returned dictionary.
         actual_results = interpreter_main(program)
         self.assertIsNotNone(actual_results)
-        self.assertIn("passed", actual_results)
+        self.assertIn("passed" actual_results) # LOC4
         self.assertIn("failed", actual_results)
         self.assertIn("tests", actual_results)
         # We expect at least one test to pass in the embedded run_tests function

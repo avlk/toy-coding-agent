@@ -531,6 +531,64 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                 'error': str(e)
             }
     
+    # Expose fuzzy_replace_in_file as MCP tool
+    @mcp.tool()
+    def fuzzy_replace_in_file(
+        file_path: str,
+        search_lines: list[str],
+        replace_lines: list[str],
+        around_line: int
+    ) -> dict:
+        """
+        Search and replace a multiline pattern in a specific file using fuzzy matching.
+        
+        This tool finds the closest approximate match to the search pattern near the
+        specified line and replaces it. Allows for small differences (typos, spacing,
+        minor edits) between the search pattern and actual code.
+        
+        Use this when:
+        - The exact code structure is slightly different than expected
+        - There might be minor whitespace differences
+        - You want to replace code near a specific line even if not an exact match
+        
+        Args:
+            file_path: Relative path to the file (relative to project folder)
+            search_lines: List of lines to search for (approximate match allowed, small differences OK)
+            replace_lines: List of lines to replace with
+            around_line: Line number around which to search for the match (1-indexed, required)
+        
+        Returns:
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded
+            - matched_line: Actual line number where replacement was made (only present if success=True)
+            - error: Error message (only present if success=False)
+        """
+        logger.info(f"fuzzy_replace_in_file(file_path={file_path!r}, search_lines={len(search_lines)} lines, replace_lines={len(replace_lines)} lines, around_line={around_line}) called")
+        
+        # Log exact search strings for debugging
+        for i, line in enumerate(search_lines):
+            logger.debug(f"search_lines[{i}] = {line!r}")
+        
+        try:
+            matched_line = pf.fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)
+            if matched_line is None:
+                error_details = f"No approximate match found near line {around_line}. The search pattern may be too different from actual code, or outside the search tolerance (±5 lines)."
+                
+                return {
+                    'success': False,
+                    'error': error_details
+                }
+            else:
+                return {
+                    'success': True,
+                    'matched_line': matched_line
+                }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     # Expose execute_sandboxed as MCP tool
     @mcp.tool()
     def execute_project(cmd_args: str, timeout: int = 30) -> dict:
