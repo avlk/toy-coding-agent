@@ -8,7 +8,17 @@ token usage statistics across multiple LLM models.
 
 class TokenUsageTracker:
     """Tracks token usage statistics across multiple LLM models."""
-    
+    EMPTY_STATS = {
+        'total_token_count': 0,
+        'cached_content_token_count': 0,
+        'candidates_token_count': 0,
+        'prompt_token_count': 0,
+        'thoughts_token_count': 0,
+        'tool_use_prompt_token_count': 0,
+        'llm_run_count': 0,
+        'total_time': 0.0
+    }
+
     def __init__(self):
         """Initialize an empty statistics dictionary."""
         self.stats = {}
@@ -24,16 +34,7 @@ class TokenUsageTracker:
         """
         # Initialize stats for new models
         if model_name not in self.stats:
-            self.stats[model_name] = {
-                'total_token_count': 0,
-                'cached_content_token_count': 0,
-                'candidates_token_count': 0,
-                'prompt_token_count': 0,
-                'thoughts_token_count': 0,
-                'tool_use_prompt_token_count': 0,
-                'llm_run_count': 0,
-                'total_time': 0.0
-            }
+            self.stats[model_name] = TokenUsageTracker.EMPTY_STATS.copy()
         
         # Update counters
         stats = self.stats[model_name]
@@ -44,6 +45,22 @@ class TokenUsageTracker:
         stats['thoughts_token_count'] += metadata.thoughts_token_count or 0
         stats['tool_use_prompt_token_count'] += metadata.tool_use_prompt_token_count or 0
         stats['llm_run_count'] += 1
+        stats['total_time'] += response_time
+
+    def record_time(self, model_name: str, response_time: float):
+        """
+        Record only the response time for a model.
+        
+        Args:
+            model_name: Name of the LLM model
+            response_time: Time taken for the LLM call in seconds
+        """
+        # Initialize stats for new models
+        if model_name not in self.stats:
+            self.stats[model_name] = TokenUsageTracker.EMPTY_STATS.copy()
+        
+        # Update time counter
+        stats = self.stats[model_name]
         stats['total_time'] += response_time
     
     def print_call_info(self, metadata, response_time: float):
