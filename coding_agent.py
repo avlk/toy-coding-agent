@@ -33,6 +33,7 @@ from sandbox_execution import execute_sandboxed
 from token_tracker import TokenUsageTracker
 from utils import *
 from typing import Dict, List, Optional, Union, Tuple, Any
+from subagent_base import SubAgentBase
 
 def format_param_value(value):
     """Format parameter values, showing 'N lines' for lists or multiline strings."""
@@ -220,298 +221,6 @@ DEFAULT_TASK_CONFIG = {
 # Initialize token usage tracker
 token_tracker = TokenUsageTracker()
 
-
-def mcp_toolset_to_function_declarations(mcp_toolset: McpToolset, allowed_mcp_tools: list[str] = None) -> tuple[list, dict]:
-    """Convert McpToolset to function declarations for use with streaming API.
-    
-    This extracts the tool definitions from McpToolset and converts them to
-    the format expected by the streaming API (generate_content_stream).
-    
-    Returns:
-        tuple: (function_declarations list, tool_map dict mapping tool names to MCPTool objects)
-    """
-    # Get or create event loop for async operations
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    # Get tools with retries
-    max_retries = 15
-    tools = None
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            if attempt == 0:
-                print(f"🔍 Attempting to connect to MCP server and get tools...")
-            tools = loop.run_until_complete(mcp_toolset.get_tools(readonly_context=None))
-            if tools:  # Successfully got tools
-                print(f"✅ MCP tools ready: received {len(tools)} tools" + (f" after {attempt + 1} attempts" if attempt > 0 else ""))
-                break
-            else:
-                print(f"⚠️  Got empty tools list on attempt {attempt + 1}")
-        except Exception as e:
-            last_error = e
-            if attempt < max_retries - 1:
-                if attempt == 0:
-                    print(f"⏳ Waiting for MCP server to be ready...")
-                print(f"   Attempt {attempt + 1} failed: {type(e).__name__}: {str(e)[:100]}")
-                time.sleep(2)  # Increased wait time
-            else:
-                print(f"❌ Failed to get MCP tools after {max_retries} attempts")
-                print(f"   Last error: {type(e).__name__}: {e}")
-                import traceback
-                traceback.print_exc()
-                return [], {}
-    
-    if not tools:
-        print("❌ No tools received from MCP server")
-        return [], {}
-    
-    print(f"🔍 Examining tool structure...")
-    function_declarations = []
-    tool_map = {}  # Map tool names to MCPTool objects for execution
-    
-    for i, tool in enumerate(tools):
-        print(f"   Tool {i+1}: {tool.name if hasattr(tool, 'name') else 'unknown'}")
-        if allowed_mcp_tools:
-            if tool.name not in allowed_mcp_tools:
-                print(f"      ⛔ Skipping tool not in allowed list")
-                continue
-        # MCPTool has raw_mcp_tool which contains the actual MCP tool
-        if hasattr(tool, 'raw_mcp_tool'):
-            raw_tool = tool.raw_mcp_tool
-            print(f"      raw_mcp_tool type: {type(raw_tool).__name__}")
-            # Check if raw_tool has inputSchema
-            if hasattr(raw_tool, 'inputSchema'):
-                # Build function declaration from MCP tool
-                func_decl = genai.types.FunctionDeclaration(
-                    name=tool.name,
-                    description=tool.description if hasattr(tool, 'description') else "",
-                    parameters=raw_tool.inputSchema
-                )
-                function_declarations.append(func_decl)
-                tool_map[tool.name] = tool  # Store the MCPTool object for later execution
-                print(f"      ✅ Created function declaration")
-            else:
-                print(f"      ⚠️  raw_mcp_tool has no inputSchema")
-        else:
-            print(f"      ⚠️  No raw_mcp_tool found")
-    
-    if function_declarations:
-        print(f"✅ Converted {len(function_declarations)} MCP tools to function declarations")
-
-    # print("MCP function declarations:")
-    # for func_decl in function_declarations:
-    #     print(f" - {func_decl.name}: {func_decl.description}, params: {(func_decl.parameters)}")
-    # print("MCP tool map keys:", list(tool_map.keys()))
-    return function_declarations, tool_map
-
-
-class ProjectSubAgent:
-    # Sub-Agent performing specific tasks on a project (like: coding, fixing syntax errors, reviewing)
-    
-    def __init__(self, model, base_config: genai.types.GenerateContentConfig, system_instruction, mcp_toolset: McpToolset = None, allowed_mcp_tools: List[str] | None = None):
-        self.config = base_config
-        self.model = model
-        self.mcp_toolset = mcp_toolset  # Store for function call execution
-        self.mcp_tool_map = {}  # Map of tool names to MCPTool objects
-        
-        # Create persistent event loop for async operations
-        try:
-            self.loop = asyncio.get_event_loop()
-            if self.loop.is_closed():
-                self.loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self.loop)
-        except RuntimeError:
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-        
-        if self.config.tools is None:
-            self.config.tools = []
-
-        if self.model.startswith("gemini-3"):
-            self.config.temperature = 1.0 # For Gemini 3 it is important not to alter the default temperature
-
-        self.config.system_instruction = system_instruction
-
-        if mcp_toolset:
-            # Convert McpToolset to function declarations for streaming API
-            function_declarations, self.mcp_tool_map = mcp_toolset_to_function_declarations(mcp_toolset, allowed_mcp_tools)
-            if function_declarations:
-                self.config.tools.append(genai.types.Tool(function_declarations=function_declarations))
-                
-                if self.config.tool_config is None:
-                    self.config.tool_config = genai.types.ToolConfig()
-                    
-                self.config.tool_config.function_calling_config = genai.types.FunctionCallingConfig(mode='AUTO')
-            else:
-                print("⚠️  No function declarations found from MCP toolset")
-    
-    def _query_attempt(self, query=None, parts=None):
-        # mark start time
-        start_time = time.monotonic()
-
-        request_parts = []
-        if query:
-            request_parts.append({"text": query})
-        if parts:
-            # Build parts as proper content structure (not concatenated strings)
-            for title, content in parts:
-                request_parts.append({"text": f"\n\n# {title}\n{content}"})
-        
-        conversation_history = [{"role": "user", "parts": request_parts}]
-        
-        # Function calling loop
-        max_function_call_rounds = 100
-        for round_num in range(max_function_call_rounds):
-            # Use streaming API
-            stream = llm.models.generate_content_stream(
-                model=self.model, contents=conversation_history, config=self.config
-            )
-            
-            # Process streaming events (synchronously - the stream is a regular generator)
-            text_chunks = []
-            function_calls = []
-            total_usage = None
-            
-            for chunk in stream:
-                # Process text parts
-                if hasattr(chunk, 'text') and chunk.text:
-                    text_chunks.append(chunk.text)
-                    print(chunk.text, end='', flush=True)
-                
-                # Collect function calls
-                if hasattr(chunk, 'candidates') and chunk.candidates:
-                    for candidate in chunk.candidates:
-                        if hasattr(candidate, 'content') and candidate.content and hasattr(candidate.content, 'parts'):
-                            for part in candidate.content.parts:
-                                if hasattr(part, 'function_call') and part.function_call:
-                                    function_calls.append(part.function_call)
-                                    params_str = ", ".join(f"{k}={format_param_value(v)}" for k, v in part.function_call.args.items())
-                                    print(f"\n📢➡️ Function call: {part.function_call.name}({params_str})", flush=True)
-                                    # Print parameters that are list of strings here in format:
-                                    # param_name:
-                                    # line1
-                                    # line2
-                                    for k, v in part.function_call.args.items():
-                                        if isinstance(v, list):
-                                            print(f"{k}:")
-                                            for line in v:
-                                                print(f"<{line}>")
-                # Track usage metadata
-                if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
-                    total_usage = chunk.usage_metadata
-            
-            print()  # New line after streaming output
-            
-            # If no function calls, we're done
-            if not function_calls:
-                end_time = time.monotonic()
-                generation_time = end_time - start_time
-                text = ''.join(text_chunks)
-                
-                # Print usage info and record statistics
-                if total_usage:
-                    token_tracker.print_call_info(total_usage, generation_time)
-                    token_tracker.record(self.model, total_usage, generation_time)
-
-                return {"text": text, "full": None, "usage": total_usage, "response_time": generation_time}
-            
-            # Execute function calls using MCP tools
-            if not self.mcp_tool_map:
-                print("⚠️  Function calls requested but no MCP tools available")
-                break
-                
-            # Add model response with function calls to history
-            model_parts = []
-            if text_chunks:
-                model_parts.append({"text": ''.join(text_chunks)})
-            for fc in function_calls:
-                model_parts.append({"function_call": fc})
-            conversation_history.append({"role": "model", "parts": model_parts})
-            
-            # Execute function calls and add responses
-            function_response_parts = []
-            for fc in function_calls:
-                try:
-                    # Get the MCPTool object for this function
-                    if fc.name not in self.mcp_tool_map:
-                        raise ValueError(f"Tool {fc.name} not found in tool map")
-                    
-                    mcp_tool = self.mcp_tool_map[fc.name]
-                    
-                    # Execute the tool directly with keyword arguments using persistent event loop
-                    # MCPTool.run_async expects args and tool_context as keyword args
-                    result = self.loop.run_until_complete(
-                        mcp_tool.run_async(args=dict(fc.args), tool_context=None)
-                    )
-                    
-                    # Format response
-                    function_response_parts.append({
-                        "function_response": {
-                            "name": fc.name,
-                            "response": {"result": result}
-                        }
-                    })
-                    
-                    # Check for 'success' key first, otherwise fall back to isError
-                    # print(result)
-                    function_response = result.get('structuredContent', {})
-                    if 'success' in function_response:
-                        is_success = function_response['success']
-                    else:
-                        is_success = not result.get('isError', False)
-                    
-                    if is_success:
-                        response = "✅ Success"
-                    else:
-                        response = "❗Error"
-                        if 'error' in function_response:
-                            response += f": {function_response['error']}"
-                    print(f"📢↩️ Function response: {response}", flush=True)                    
-                    # print(f"Full response: {json.dumps(result)[:500]}", flush=True)
-                except Exception as e:
-                    function_response_parts.append({
-                        "function_response": {
-                            "name": fc.name,
-                            "response": {"error": str(e)}
-                        }
-                    })
-                    print(f"📢↩️ Function response: ❗Error: {e}", flush=True)
-            
-            conversation_history.append({"role": "user", "parts": function_response_parts})
-        
-        # Max rounds reached
-        print(f"⚠️  Max function call rounds ({max_function_call_rounds}) reached")
-        end_time = time.monotonic()
-        generation_time = end_time - start_time
-        if total_usage:
-            token_tracker.print_call_info(total_usage, generation_time)
-            token_tracker.record(self.model, total_usage, generation_time)
-        return {"text": "", "full": None, "usage": total_usage, "response_time": generation_time}
-    
-
-    def query(self, query=None, parts=None):
-        max_retries = 10
-        
-        for attempt in range(max_retries):
-            try:
-                return self._query_attempt(query=query, parts=parts)
-            except errors.ServerError as e:
-                if attempt < max_retries - 1:
-                    # 15 seconds for 503, 5 seconds for other 5xx errors
-                    delay = 15 if e.code == 503 else 5
-                    print(f"⚠️  Server error: {e}")
-                    print(f"🔄 Retrying in {delay}s... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(delay)
-                else:
-                    print(f"❌ Server error after {max_retries} retries: {e}")
-                    raise
 
 
 def llm_query(query, parts=None, config=llm_config_coder, model=default_llm_model):
@@ -1363,6 +1072,7 @@ You have to use MCP tools to accomplish your task:
 - fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` or `multiline_replace_in_file` for small fixes.
 - only if the error is widespread (like wrong indentation across many lines), use bulk refactoring using `replace_in_files` with regex patterns. 
 - For targeted edits, use `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` and `replace_in_files(pattern, replacement, is_regex, file_pattern)`
+- DO NOT use `fuzzy_replace_in_file` multiple times in the same round for the same file - this will lead to errors as `around_line` will be offset.
 - If `fuzzy_replace_in_file` fails multiple times, try to achieve the same with `replace_in_files` and regex patterns.
 - For bulk refactoring (like renaming variables), use `replace_in_files(pattern, replacement, is_regex, file_pattern)`
 - After making edits, use `run_ruff_check()` again to verify fixes.
@@ -1393,8 +1103,10 @@ Your response is a summary of your work. Structure it as follows:
 
 
     try:
-        subagent = ProjectSubAgent(
+        subagent = SubAgentBase(
+            llm=llm,
             model="gemini-2.5-flash-lite", 
+            token_tracker=token_tracker,
             base_config=llm_config, 
             system_instruction=system_instruction, 
             mcp_toolset=mcp.get_toolset(),
@@ -1410,7 +1122,7 @@ Your response is a summary of your work. Structure it as follows:
             ]
         )
         
-        subagent.query(query="Fix all syntax errors in the project code.")
+        subagent.query(query="Fix all syntax errors in the project code.", debug=True)
     finally:
         mcp.stop()
         # Print token usage summary
