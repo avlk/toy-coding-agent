@@ -1,6 +1,5 @@
 import time
 import asyncio
-from google import genai
 from google.genai import errors, types
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from google.adk.agents import LlmAgent
@@ -26,67 +25,43 @@ def format_param_value(value):
 class SubAgentGoogle:
     """Sub-Agent using Google ADK LlmAgent for MCP tool integration."""
     
-    def __init__(self, llm, model, token_tracker, base_config: genai.types.GenerateContentConfig, system_instruction, mcp_toolset: McpToolset = None):
-        self.llm = llm  # Keep for compatibility but won't use directly
+    def __init__(self, name, model, token_tracker, system_instruction, mcp_toolset: McpToolset = None, planner=None):
+        self.agent_name = name
         self.token_tracker = token_tracker
         self.model = model
         self.system_instruction = system_instruction
-        
-        # Build tools list for LlmAgent
-        tools = []
-        if mcp_toolset:
-            tools = [mcp_toolset]
-        
+        self.debug = False
+        self.progress_indication = True
+
         # Create LlmAgent with ADK
-        try:
-            print(f"🔍 Creating LlmAgent with model: {model}")
-            
-            # Basic agent creation - start simple
-            self.agent = LlmAgent(
-                model=model,
-                name='subagent',
-                instruction=system_instruction
-            )
-            
-            # Add tools separately if available
-            if tools:
-                try:
-                    # Check if we can set tools on the agent
-                    if hasattr(self.agent, 'tools'):
-                        self.agent.tools = tools
-                        print(f"✅ Added {len(tools)} MCP toolsets to agent")
-                    else:
-                        print(f"⚠️  Agent doesn't support tools attribute, trying constructor again")
-                        self.agent = LlmAgent(
-                            model=model,
-                            name='subagent', 
-                            instruction=system_instruction,
-                            tools=tools
-                        )
-                        print(f"✅ Created LlmAgent with {len(tools)} MCP toolsets")
-                except Exception as tool_error:
-                    print(f"⚠️  Failed to add tools: {tool_error}")
-                    print(f"⚠️  Continuing with agent without tools")
-            
-            # Create runner for execution with session service
-            self.session_service = InMemorySessionService()
-            self.agent_runner = Runner(
-                agent=self.agent,
-                app_name='subagent',
-                session_service=self.session_service
-            )
-            
-            print(f"✅ Created LlmAgent successfully")
-            
-        except Exception as e:
-            print(f"❌ Failed to create LlmAgent: {e}")
-            import traceback
-            traceback.print_exc()
-            # Fallback - create empty agent
-            self.agent = None
-            self.agent_runner = None
-            self.session_service = None
+        agent_args = {}
+        if mcp_toolset:
+            agent_args['tools'] =  [mcp_toolset]
+        if planner:
+            agent_args['planner'] = planner
+
+        self.agent = LlmAgent(
+            model=model,
+            name=self.agent_name,
+            instruction=system_instruction,
+            **agent_args
+        )
+                    
+        # Create runner for execution with session service
+        self.session_service = InMemorySessionService()
+        self.agent_runner = Runner(
+            agent=self.agent,
+            app_name=self.agent_name,
+            session_service=self.session_service
+        )
     
+    def set_debug(self, debug: bool):
+        """Enable or disable debug printing."""
+        self.debug = debug
+    def set_progress_indication(self, progress_indication: bool):
+        """Enable or disable progress indication."""
+        self.progress_indication = progress_indication
+
     def _function_call_debug_print(self, function_call):
         """Debug print for function calls - mimicking original interface."""
         if hasattr(function_call, 'name') and hasattr(function_call, 'args'):
@@ -101,25 +76,23 @@ class SubAgentGoogle:
             print(f"🤖➡️ Function call: {function_call}", flush=True)
 
     def _function_response_debug_print(self, result):
-        """Debug print for function responses - mimicking original interface."""
-        if isinstance(result, dict):
-            # Check for 'success' key first, otherwise fall back to isError
-            if 'success' in result:
-                is_success = result['success']
-            else:
-                is_success = not result.get('isError', False)
-            
-            if is_success:
-                response = "✅ Success"
-            else:
-                response = "❗Error"
-                if 'error' in result:
-                    response += f": {result['error']}"
+        # Check for 'success' key first, otherwise fall back to isError
+        function_response = result.get('structuredContent', {})
+        if 'success' in function_response:
+            is_success = function_response['success']
         else:
-            response = f"✅ Response: {result}"
-        print(f"🤖↩️ Function response: {response}", flush=True)
+            is_success = not result.get('isError', False)
+        
+        if is_success:
+            response = "✅ Success"
+        else:
+            response = "❗Error"
+            if 'error' in function_response:
+                response += f": {function_response['error']}"
+        print(f"🤖↩️ Function response: {response}", flush=True)                    
 
-    async def _async_query(self, query=None, parts=None, debug=False) -> Dict[str, Any]:
+
+    async def _async_query(self, query=None, parts=None) -> Dict[str, Any]:
         """Async implementation using LlmAgent."""
         if not self.agent or not self.agent_runner:
             raise RuntimeError("LlmAgent not properly initialized")
@@ -137,99 +110,99 @@ class SubAgentGoogle:
         start_time = time.monotonic()
         
         # Use a consistent session ID for this query
-        session_id = f"subagent_{int(time.time())}"
-        user_id = "subagent_user"
+        session_id = f"{self.agent_name}_{int(time.time())}"
+        user_id = f"{self.agent_name}_user"
         
         final_text = ""
         token_usage = None
         function_call_count = 0
+        conversation_history = []
         
+        if self.debug:
+            print(f"📝 User message: {message[:200]}{'...' if len(message) > 200 else ''}")
+        if self.progress_indication:
+            print(f"⏳ Agent {self.agent_name} processing", end="", flush=True)
+
+        # Create session
         try:
-            if debug:
-                print(f"\n🔄 --- LlmAgent Query ---\n", flush=True)
-                print(f"📝 User message: {message[:200]}{'...' if len(message) > 200 else ''}")
-            
-            # Create session if needed
-            try:
-                session = await self.session_service.create_session(
-                    app_name='subagent',
-                    user_id=user_id,
-                    session_id=session_id
-                )
-            except Exception as session_error:
-                if debug:
-                    print(f"⚠️  Session creation failed, continuing anyway: {session_error}")
-            
-            # Run agent with streaming events
-            async for event in self.agent_runner.run_async(
+            session = await self.session_service.create_session(
+                app_name=self.agent_name,
                 user_id=user_id,
-                session_id=session_id, 
-                new_message=types.Content(role='user', parts=[types.Part(text=message)])
-            ):
-                # Handle event content (text and function calls)
-                if hasattr(event, 'content') and hasattr(event.content, 'parts') and event.content.parts:
-                    for part in event.content.parts:
-                        # Handle text response
-                        if hasattr(part, 'text') and part.text:
-                            agent_text = part.text
-                            if debug:
-                                print(f"🤖📢 {agent_text}")
-                            final_text += agent_text
-                        
-                        # Handle function calls
-                        if hasattr(part, 'function_call') and part.function_call:
-                            function_call_count += 1
-                            if debug:
-                                self._function_call_debug_print(part.function_call)
-                                
-                        # Handle function responses
-                        if hasattr(part, 'function_response') and part.function_response:
-                            if debug:
-                                self._function_response_debug_print(part.function_response.response)
-                
-                # Extract token usage if available
-                if hasattr(event, 'usage_metadata') and event.usage_metadata:
-                    token_usage = event.usage_metadata
-                
-                # Check if this is the final response - but process content first before breaking
-                is_final = hasattr(event, 'is_final_response') and event.is_final_response()
-                if is_final:
-                    if debug:
-                        print("✅ Final response received")
-                    # Don't break immediately - let the loop finish processing any remaining content
-                    # The while loop will exit naturally when no more events are available
+                session_id=session_id
+            )
+        except Exception as session_error:
+            if self.debug:
+                print(f"⚠️  Session creation failed, continuing anyway: {session_error}")
         
-        except Exception as e:
-            print(f"❌ Error in LlmAgent query: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+        # Run agent with streaming events
+        async for event in self.agent_runner.run_async(
+            user_id=user_id,
+            session_id=session_id, 
+            new_message=types.Content(role='user', parts=[types.Part(text=message)])
+        ):
+            # Handle event content (text and function calls)
+            agent_text = ""
+            conversation_history.append(event)
+            if self.progress_indication:
+                print(".", end="", flush=True)
+            if hasattr(event, 'content') and hasattr(event.content, 'parts') and event.content.parts:
+                for part in event.content.parts:
+                    # Handle text response
+                    if hasattr(part, 'text') and part.text:
+                        agent_text += part.text
+                    
+                    # Handle function calls
+                    if hasattr(part, 'function_call') and part.function_call:
+                        function_call_count += 1
+                        if self.debug:
+                            self._function_call_debug_print(part.function_call)
+                            
+                    # Handle function responses
+                    if hasattr(part, 'function_response') and part.function_response:
+                        if self.debug:
+                            self._function_response_debug_print(part.function_response.response)
+
+            if self.debug and agent_text:
+                print(f"🤖📢 {agent_text}")
+            final_text = agent_text
+
+            # Extract token usage if available
+            if hasattr(event, 'usage_metadata') and event.usage_metadata:
+                token_usage = event.usage_metadata
+            
+            # Check if this is the final response
+            is_final = hasattr(event, 'is_final_response') and event.is_final_response()
+            if is_final and self.debug:
+                print("✅ Final response received")
+            # Don't break immediately - let the loop finish processing any remaining content
+            # The while loop will exit naturally when no more events are available
         
         end_time = time.monotonic()
         generation_time = end_time - start_time
         
         # Track tokens if available
         if token_usage:
-            self.token_tracker.print_call_info(token_usage, generation_time)
             self.token_tracker.record(self.model, token_usage, generation_time)
-        elif debug:
-            print(f"⚠️  No token usage information available from LlmAgent")
-        
+            if self.debug:
+                self.token_tracker.print_call_info(token_usage, generation_time)
+        if self.progress_indication:
+            print(" Done.")
+
         # Return in same format as original SubAgentBase
         return {
             "text": final_text,
-            "full": None,  # LlmAgent manages conversation internally
+            "full": conversation_history,
             "usage": token_usage,
             "response_time": generation_time
         }
 
-    async def query(self, query=None, parts=None, debug=False) -> Dict[str, Any]:
+    async def query(self, query=None, parts=None) -> Dict[str, Any]:
         """Async query interface. Caller must manage event loop."""
         max_retries = 10
         
         for attempt in range(max_retries):
             try:
-                return await self._async_query(query=query, parts=parts, debug=debug)
+                return await self._async_query(query=query, parts=parts)
                     
             except errors.ServerError as e:
                 if attempt < max_retries - 1:
@@ -246,6 +219,6 @@ class SubAgentGoogle:
                 print(f"❌ Non-retryable error: {e}")
                 raise
 
-    def query_sync(self, query=None, parts=None, debug=False) -> Dict[str, Any]:
+    def query_sync(self, query=None, parts=None) -> Dict[str, Any]:
         """Sync wrapper - creates new event loop (use sparingly)."""
-        return asyncio.run(self.query(query=query, parts=parts, debug=debug))
+        return asyncio.run(self.query(query=query, parts=parts))

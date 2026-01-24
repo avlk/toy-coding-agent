@@ -32,10 +32,8 @@ from sandbox_execution import execute_sandboxed
 from token_tracker import TokenUsageTracker
 from utils import *
 from mcp_utils import ProjectFolder
-
-# Choose implementation:
-from subagent_base import SubAgentBase
-# from subagent_google import SubAgentGoogle as SubAgentBase  # Uncomment to use LlmAgent
+from mcp_instance import MCPInstance
+from subagent_syntax import create_subagent_syntax
 
 def format_param_value(value):
     """Format parameter values, showing 'N lines' for lists or multiline strings."""
@@ -790,58 +788,6 @@ def wait_mcp_operation_complete(mcp_toolset, loop, max_retries=20, delay=5):
     print(f"❌ MCP server not responding after {max_retries * delay}s")
     return False
 
-class MCPInstance():
-    process = None
-    def __init__(self, project_path: str):
-        self.project_path = project_path
-        if MCPInstance.process is not None:
-            raise RuntimeError("MCPInstance already running")
-        MCPInstance.process = None
-
-    def start(self):
-        os.makedirs(self.project_path, exist_ok=True)
-        
-        print("\n🔌 Starting MCP server in HTTP mode...")
-        mcp_script = os.path.join(os.path.dirname(__file__), "mcp_server.py")
-        self.mcp_host = "127.0.0.1"
-        self.mcp_port = 8000
-        
-        # Start MCP server as a subprocess in HTTP mode
-        MCPInstance.process = subprocess.Popen(
-            [sys.executable, mcp_script, self.project_path, "--transport", "http", "--host", self.mcp_host, "--port", str(self.mcp_port)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        
-        # Give server time to start
-        time.sleep(3)
-
-    def get_toolset(self, allowed_tools=None):
-        mcp_params = {}
-        if allowed_tools:
-            mcp_params['tool_filter'] = allowed_tools
-
-        return McpToolset(connection_params=StreamableHTTPConnectionParams(
-                url=f"http://{self.mcp_host}:{self.mcp_port}/mcp",
-                timeout=60.0,
-                sse_read_timeout=300.0,
-                terminate_on_close=False  # We'll manage termination in finally block
-            ), 
-            **mcp_params)
-
-    def stop(self):
-        # Terminate MCP server
-        if MCPInstance.process:
-            print("🛑 Stopping MCP server...")
-            MCPInstance.process.terminate()
-            try:
-                MCPInstance.process.wait(timeout=5)
-                print("✅ MCP server stopped")
-            except subprocess.TimeoutExpired:
-                print("⚠️  MCP server did not stop gracefully, killing...")
-                MCPInstance.process.kill()
-                MCPInstance.process.wait()
 
 
 # --- Main Agent Function ---
@@ -1049,140 +995,6 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
     print(f"\n✅ Code generation complete. Project saved to: {final_project_path}")
     return final_project_path
 
-def prepare_test_files(test_name: str):
-    # Copy test files to solutions/{test_name}
-    import shutil
-    if os.path.exists(f"solutions/{test_name}"):
-        shutil.rmtree(f"solutions/{test_name}")
-    shutil.copytree(f"test_sets/{test_name}", f"solutions/{test_name}")
-
-def test_streaming_agent():
-    # Copy test files to solutions/test_streaming_agent
-    test_name = "test_streaming_agent"
-    mcp = MCPInstance(project_path=f"solutions/{test_name}")
-    mcp.start()
-
-    llm_config = genai.types.GenerateContentConfig(
-        temperature=1.0,
-    )
-
-    system_instruction = """
-You are a top grade syntax fixing agent. Your task is to fix any syntax errors in the provided Python code.
-You don't need to understand the full program logic, just fix the syntax issues.
-
-You have to use MCP tools to accomplish your task:
-- first use `run_ruff_check()` to identify errors. If there are errors, the response will contain an `issues` list with file paths and line numbers.
-- then analyze the errors and fix them using the following approach:
-- summarize the errors, group them by file and then group errors that have close line numbers together
-- for each file with errors, read the relevant lines using `get_line_range` to understand the context of the error. 
-  Make sure to read a 10 lines before and 10 lines after the error lines to get full context.
-- then imagine the most possible root cause for each group of errors, since many errors at the same line or adjacent lines are likely introduced by just one error.
-- fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` or `multiline_replace_in_file` for small fixes.
-- only if the error is widespread (like wrong indentation across many lines), use bulk refactoring using `replace_in_files` with regex patterns. 
-- For targeted edits, use `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` and `replace_in_files(pattern, replacement, is_regex, file_pattern)`
-- DO NOT use `fuzzy_replace_in_file` multiple times in the same round for the same file - this will lead to errors as `around_line` will be offset.
-- If `fuzzy_replace_in_file` fails multiple times, try to achieve the same with `replace_in_files` and regex patterns.
-- For bulk refactoring (like renaming variables), use `replace_in_files(pattern, replacement, is_regex, file_pattern)`
-- After making edits, use `run_ruff_check()` again to verify fixes.
-- When you call `run_ruff_check()`, check the response. If it contains 'success': True, this means there are no syntax errors.
-- When there are no syntax errors, you MUST end your work and return your summary.
-
-Your tools:
-- `list_files()` - List files in the project.
-- `get_line_range(file_path, start, end)` - Read specific lines of the file
-- `search_files(pattern)` - Case-sensitive search for a text match across project files. Returns a list of matching strings and matching file metadata.
-- `find_python_definition(name)` - Find Python definition of a class, method or function. Returns the lines with declaration and definition (all lines), file metadata, line numbers of the definition. 
-- `replace_in_files(pattern, replacement, is_regex=False)` - Search and replace a string pattern across all matching files in the project. Returns dict mapping file paths to number of replacements made. Only saves files where replacements occurred.
-- `replace_in_files(pattern, replacement, is_regex=False, file_pattern)` - Extended `replace_in_files` call, where `file_pattern` filters which files to process (e.g., "*.py").
-- `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, where pattern is treated as regex and replacement may have backreferences.
-- `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, pattern is treated as regex and replacement may have backreferences, and `file_pattern` filters which files to process (e.g., "*.py").
-- `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` - Forgiving tool for multiline replacement in files. Will find a close match for `search_lines` (list of strings) around line `around_line`, and replace the match with `replace_lines`. Use it for small edits, such as syntax error fixes.
-- `multiline_replace_in_file(file_path, search_lines, replace_lines)` - Search and replace a matching line sequence with another line sequence in a specific file. Returns number of replacements made.
-- `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)` - Extended multiline replacement. If `only_around_line` is specified (1-indexed line number), only replaces the match closest to that line. Use it to only make one replacement around specific location.
-- `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues (WARNING: modifies files). Returns dict with 'success' status, and if 'success' is false, 'error' message, and 'issues' list.
-
-## Response Format
-IMPORTANT: After completing all your work, you MUST provide a final summary in this format:
-
-1. **What I completed**: Describe what you implemented (fixes made, files changed, etc.)
-2. **What could not be fixed**: Brief summary of what could not be fixed (if any)
-
-Always end your work with this summary format. Do not end without providing this summary.
-    """
-
-
-
-    try:
-        # Create persistent event loop for clean async handling
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            allowed_tools = [
-                    "list_files",
-                    "get_line_range",
-                    "search_files",
-                    "find_python_definition",
-                    "replace_in_files",
-                    "fuzzy_replace_in_file",
-                    "multiline_replace_in_file",
-                    "run_ruff_check"
-                ]
-            # To use GoogleAIAgent: uncomment import above and this will automatically use SubAgentGoogle
-            subagent = SubAgentBase(
-                llm=llm,
-                model="gemini-2.5-flash-lite", 
-                token_tracker=token_tracker,
-                base_config=llm_config, 
-                system_instruction=system_instruction, 
-                mcp_toolset=mcp.get_toolset(allowed_tools)
-            )
-
-            nrounds = 5
-            success_rounds = []
-
-            for round_num in range(nrounds):            
-                prepare_test_files(test_name)
-
-                loop.run_until_complete(
-                    subagent.query(query="Fix all syntax errors in the project code.", debug=True)
-                )
-
-                # run ruff check to verify no syntax errors remain
-                project = ProjectFolder(f"solutions/{test_name}")
-                ruff_result = project.run_ruff_check()
-                if ruff_result.get('success', False):
-                    print(f"\n✅ All syntax errors fixed!")
-                    success_rounds.append(round_num)
-                else:
-                    print(f"\n🔄 Syntax errors still remain") 
-                    print(f"Issues: {ruff_result.get('issues', [])}")      
-
-            print("="*80)
-            print(f"\nTest completed: {len(success_rounds)} out of {nrounds} rounds successful")
-            print(f"Successful rounds: {success_rounds}")
-            token_tracker.print_summary()
-        finally:
-            # Cleanup pending tasks before closing loop
-            try:
-                pending = asyncio.all_tasks(loop)
-                if pending:
-                    # Cancel all pending tasks
-                    for task in pending:
-                        task.cancel()
-                    
-                    # Wait for cancellation to complete
-                    loop.run_until_complete(
-                        asyncio.gather(*pending, return_exceptions=True)
-                    )
-            except Exception:
-                pass  # Ignore cleanup errors
-            finally:
-                loop.close()
-            
-    finally:
-        mcp.stop()
-
 
 # --- CLI Test Run ---
 if __name__ == "__main__":
@@ -1214,6 +1026,4 @@ if __name__ == "__main__":
     
     use_case_input = load_file(f"tasks/{config_name}/hl_spec.md")
     goals_input = load_file(f"tasks/{config_name}/ac.md")
-    # run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals, reset_threshold=args.reset, max_tokens_per_call=args.max_tokens_per_call)
-
-    test_streaming_agent()
+    run_code_agent(task_config, use_case_input, goals_input, flag_refine_goals=args.refine_goals, reset_threshold=args.reset, max_tokens_per_call=args.max_tokens_per_call)
