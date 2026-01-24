@@ -19,6 +19,35 @@ class TokenUsageTracker:
         'total_time': 0.0
     }
 
+    PRICING = {
+        # Pricing data (per 1M tokens)
+        'gemini-3-pro-preview': {
+            'input': 2.0,
+            'output': 12.0,
+            'cached': 0.2
+        },
+        'gemini-3-flash-preview': {
+            'input': 0.5,
+            'output': 3.0,
+            'cached': 0.05
+        },
+        'gemini-2.5-pro': {
+            'input': 1.25,
+            'output': 10.0,
+            'cached': 0.125
+        },
+        'gemini-2.5-flash': {
+            'input': 0.3,
+            'output': 2.5,
+            'cached': 0.03
+        },
+        'gemini-2.5-flash-lite': {
+            'input': 0.1,
+            'output': 0.4,
+            'cached': 0.01
+        },
+    }
+
     def __init__(self):
         """Initialize an empty statistics dictionary."""
         self.stats = {}
@@ -81,6 +110,26 @@ class TokenUsageTracker:
         ))
         print(f"Time taken for LLM call: {response_time:.1f} seconds")
     
+    def billable_tokens(self, stat_item) -> dict[str, int]:
+        """
+        Get billable token counts from a statistics item.
+        
+        Args:
+            stat_item: A statistics dictionary for a model
+
+        Returns:
+            Dictionary with billable token counts
+        """     
+        input = stat_item['prompt_token_count'] + stat_item['tool_use_prompt_token_count']
+        output =  stat_item['candidates_token_count'] + stat_item['thoughts_token_count']
+        cached = stat_item['cached_content_token_count']
+        input -= cached
+        return {
+            'cached': cached,
+            'input': input,
+            'output': output,
+        }
+
     def summary(self) -> list[str]:
         """
         Generate aggregated token usage statistics for all models.
@@ -99,6 +148,7 @@ class TokenUsageTracker:
         
         for model_name, stats in sorted(self.stats.items()):
             avg_time = stats['total_time'] / stats['llm_run_count'] if stats['llm_run_count'] > 0 else 0
+            billable = self.billable_tokens(stats)
             lines.append("")
             lines.append(f"🤖 Model: {model_name}")
             lines.append(f"   Runs: {stats['llm_run_count']}")
@@ -109,6 +159,20 @@ class TokenUsageTracker:
             lines.append(f"   ├─ Cached: {stats['cached_content_token_count']:,}")
             lines.append(f"   ├─ Thoughts: {stats['thoughts_token_count']:,}")
             lines.append(f"   └─ Tool use: {stats['tool_use_prompt_token_count']:,}")
+            lines.append(f"   Billable tokens:")
+            lines.append(f"   ├─ Input: {billable['input']:,}")
+            lines.append(f"   ├─ Output: {billable['output']:,}")
+            lines.append(f"   └─ Cached: {billable['cached']:,}")
+            if model_name in self.PRICING:
+                pricing = self.PRICING[model_name]
+                cost_input = (billable['input'] / 1_000_000) * pricing['input']
+                cost_output = (billable['output'] / 1_000_000) * pricing['output']
+                cost_cached = (billable['cached'] / 1_000_000) * pricing['cached']
+                total_cost = cost_input + cost_output + cost_cached
+                lines.append(f"   Estimated Cost: ${total_cost:.4f}")
+                lines.append(f"   ├─ Input: ${cost_input:.4f}")
+                lines.append(f"   ├─ Output: ${cost_output:.4f}")
+                lines.append(f"   └─ Cached: ${cost_cached:.4f}")
         
         # Add grand totals
         total_runs = sum(s['llm_run_count'] for s in self.stats.values())
