@@ -26,23 +26,13 @@ def format_param_value(value):
 class SubAgentBase:
     # Sub-Agent performing specific tasks on a project (like: coding, fixing syntax errors, reviewing)
     
-    def __init__(self, llm, model, token_tracker, base_config: genai.types.GenerateContentConfig, system_instruction, mcp_toolset: McpToolset = None, allowed_mcp_tools: List[str] | None = None):
+    def __init__(self, llm, model, token_tracker, base_config: genai.types.GenerateContentConfig, system_instruction, mcp_toolset: McpToolset = None):
         self.llm = llm
         self.token_tracker = token_tracker
         self.config = base_config
         self.model = model
         self.mcp_toolset = mcp_toolset  # Store for function call execution
         self.mcp_tool_map = {}  # Map of tool names to MCPTool objects
-        
-        # Create persistent event loop for async operations
-        try:
-            self.loop = asyncio.get_event_loop()
-            if self.loop.is_closed():
-                self.loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self.loop)
-        except RuntimeError:
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
         
         if self.config.tools is None:
             self.config.tools = []
@@ -54,16 +44,21 @@ class SubAgentBase:
 
         if mcp_toolset:
             # Convert McpToolset to function declarations for streaming API
-            function_declarations, self.mcp_tool_map = self.mcp_toolset_to_function_declarations(mcp_toolset, allowed_mcp_tools)
-            if function_declarations:
-                self.config.tools.append(genai.types.Tool(function_declarations=function_declarations))
-                
-                if self.config.tool_config is None:
-                    self.config.tool_config = genai.types.ToolConfig()
+            # Note: This will be done synchronously for now, but could be made async
+            try:
+                function_declarations, self.mcp_tool_map = self.mcp_toolset_to_function_declarations(mcp_toolset)
+                if function_declarations:
+                    self.config.tools.append(genai.types.Tool(function_declarations=function_declarations))
                     
-                self.config.tool_config.function_calling_config = genai.types.FunctionCallingConfig(mode='AUTO')
-            else:
-                print("⚠️  No function declarations found from MCP toolset")
+                    if self.config.tool_config is None:
+                        self.config.tool_config = genai.types.ToolConfig()
+                        
+                    self.config.tool_config.function_calling_config = genai.types.FunctionCallingConfig(mode='AUTO')
+                else:
+                    print("⚠️  No function declarations found from MCP toolset")
+            except Exception as e:
+                print(f"⚠️  Failed to initialize MCP toolset: {e}")
+                print(f"⚠️  Continuing without MCP tools")
     
     def _function_call_debug_print(self, function_call):
         params_str = ", ".join(f"{k}={format_param_value(v)}" for k, v in function_call.args.items())
@@ -92,7 +87,7 @@ class SubAgentBase:
         # print(f"Full response: {json.dumps(result)[:500]}", flush=True)
 
 
-    def _query_attempt(self, query=None, parts=None, debug=False) -> Dict[str, Any]:
+    async def _async_query(self, query=None, parts=None, debug=False) -> Dict[str, Any]:
         # mark start time
         start_time = time.monotonic()
 
@@ -180,12 +175,10 @@ class SubAgentBase:
                     if fc.name not in self.mcp_tool_map:
                         raise ValueError(f"Tool {fc.name} not found in tool map")
                                         
-                    # Execute the tool directly with keyword arguments using persistent event loop
+                    # Execute the tool directly with keyword arguments
                     # MCPTool.run_async expects args and tool_context as keyword args
                     mcp_tool = self.mcp_tool_map[fc.name]
-                    result = self.loop.run_until_complete(
-                        mcp_tool.run_async(args=dict(fc.args), tool_context=None)
-                    )
+                    result = await mcp_tool.run_async(args=dict(fc.args), tool_context=None)
 
                     if debug:
                         self._function_call_debug_print(fc)
@@ -222,24 +215,29 @@ class SubAgentBase:
         return {"text": final_text, "full": conversation_history, "usage": token_usage, "response_time": generation_time}
     
 
-    def query(self, query=None, parts=None, debug=False) -> Dict[str, Any]:
+    async def query(self, query=None, parts=None, debug=False) -> Dict[str, Any]:
+        """Async query interface. Caller must manage event loop."""
         max_retries = 10
         
         for attempt in range(max_retries):
             try:
-                return self._query_attempt(query=query, parts=parts, debug=debug)
+                return await self._async_query(query=query, parts=parts, debug=debug)
             except errors.ServerError as e:
                 if attempt < max_retries - 1:
                     # 15 seconds for 503, 5 seconds for other 5xx errors
                     delay = 15 if e.code == 503 else 5
                     print(f"⚠️  Server error: {e}")
                     print(f"🔄 Retrying in {delay}s... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)  # Use async sleep
                 else:
                     print(f"❌ Server error after {max_retries} retries: {e}")
                     raise
 
-    def mcp_toolset_to_function_declarations(self, mcp_toolset: McpToolset, allowed_mcp_tools: list[str] = None) -> tuple[list, dict]:
+    def query_sync(self, query=None, parts=None, debug=False) -> Dict[str, Any]:
+        """Sync wrapper - creates new event loop (use sparingly)."""
+        return asyncio.run(self.query(query=query, parts=parts, debug=debug))
+
+    def mcp_toolset_to_function_declarations(self, mcp_toolset: McpToolset) -> tuple[list, dict]:
         """Convert McpToolset to function declarations for use with streaming API.
         
         This extracts the tool definitions from McpToolset and converts them to
@@ -248,21 +246,22 @@ class SubAgentBase:
         Returns:
             tuple: (function_declarations list, tool_map dict mapping tool names to MCPTool objects)
         """
-        # Get or create event loop for async operations
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        # Get tools with retries
+        # Get tools with retries - try to use existing event loop first
         tools = None
         # print(f"🔍 Attempting to connect to MCP server and get tools...")
         try:
-            tools = loop.run_until_complete(mcp_toolset.get_tools(readonly_context=None))
+            # Try to get existing event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # If we have a running loop, we need to schedule this as a task
+                # For now, create a new task and run synchronously
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, mcp_toolset.get_tools(readonly_context=None))
+                    tools = future.result()
+            except RuntimeError:
+                # No running loop, safe to use asyncio.run
+                tools = asyncio.run(mcp_toolset.get_tools(readonly_context=None))
         except Exception as e:
             print(f"❌ Failed to get MCP tools from server:")
             print(f"   Last error: {type(e).__name__}: {e}")
@@ -281,10 +280,6 @@ class SubAgentBase:
         tool_map = {}  # Map tool names to MCPTool objects for execution
         
         for i, tool in enumerate(tools):
-            # Check if tool is allowed
-            if allowed_mcp_tools:
-                if tool.name not in allowed_mcp_tools:
-                    continue
             # MCPTool has raw_mcp_tool which contains the actual MCP tool
             if not hasattr(tool, 'raw_mcp_tool'):
                 continue

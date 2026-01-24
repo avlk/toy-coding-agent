@@ -28,12 +28,14 @@ from google.adk.runners import Runner
 from google.adk.planners import PlanReActPlanner, BuiltInPlanner
 from google.adk.code_executors import BuiltInCodeExecutor
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, StdioConnectionParams, StdioServerParameters, StreamableHTTPConnectionParams
-from patch import patch_code, is_unified_diff
 from sandbox_execution import execute_sandboxed
 from token_tracker import TokenUsageTracker
 from utils import *
-from typing import Dict, List, Optional, Union, Tuple, Any
+from mcp_utils import ProjectFolder
+
+# Choose implementation:
 from subagent_base import SubAgentBase
+# from subagent_google import SubAgentGoogle as SubAgentBase  # Uncomment to use LlmAgent
 
 def format_param_value(value):
     """Format parameter values, showing 'N lines' for lists or multiline strings."""
@@ -815,15 +817,18 @@ class MCPInstance():
         # Give server time to start
         time.sleep(3)
 
-    def get_toolset(self):
-        return McpToolset(
-                connection_params=StreamableHTTPConnectionParams(
-                    url=f"http://{self.mcp_host}:{self.mcp_port}/mcp",
-                    timeout=60.0,
-                    sse_read_timeout=300.0,
-                    terminate_on_close=False  # We'll manage termination in finally block
-                )            
-            )
+    def get_toolset(self, allowed_tools=None):
+        mcp_params = {}
+        if allowed_tools:
+            mcp_params['tool_filter'] = allowed_tools
+
+        return McpToolset(connection_params=StreamableHTTPConnectionParams(
+                url=f"http://{self.mcp_host}:{self.mcp_port}/mcp",
+                timeout=60.0,
+                sse_read_timeout=300.0,
+                terminate_on_close=False  # We'll manage termination in finally block
+            ), 
+            **mcp_params)
 
     def stop(self):
         # Terminate MCP server
@@ -1044,14 +1049,17 @@ def run_code_agent(task_config: dict, use_case: str, goals: str, flag_refine_goa
     print(f"\n✅ Code generation complete. Project saved to: {final_project_path}")
     return final_project_path
 
+def prepare_test_files(test_name: str):
+    # Copy test files to solutions/{test_name}
+    import shutil
+    if os.path.exists(f"solutions/{test_name}"):
+        shutil.rmtree(f"solutions/{test_name}")
+    shutil.copytree(f"test_sets/{test_name}", f"solutions/{test_name}")
+
 def test_streaming_agent():
     # Copy test files to solutions/test_streaming_agent
-    import shutil
-    if os.path.exists("solutions/test_streaming_agent"):
-        shutil.rmtree("solutions/test_streaming_agent")
-    shutil.copytree("test_sets/test_streaming_agent", "solutions/test_streaming_agent")
-
-    mcp = MCPInstance(project_path="solutions/test_streaming_agent")
+    test_name = "test_streaming_agent"
+    mcp = MCPInstance(project_path=f"solutions/{test_name}")
     mcp.start()
 
     llm_config = genai.types.GenerateContentConfig(
@@ -1094,39 +1102,86 @@ Your tools:
 - `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues (WARNING: modifies files). Returns dict with 'success' status, and if 'success' is false, 'error' message, and 'issues' list.
 
 ## Response Format
-Your response is a summary of your work. Structure it as follows:
+IMPORTANT: After completing all your work, you MUST provide a final summary in this format:
 
 1. **What I completed**: Describe what you implemented (fixes made, files changed, etc.)
 2. **What could not be fixed**: Brief summary of what could not be fixed (if any)
+
+Always end your work with this summary format. Do not end without providing this summary.
     """
 
 
 
     try:
-        subagent = SubAgentBase(
-            llm=llm,
-            model="gemini-2.5-flash-lite", 
-            token_tracker=token_tracker,
-            base_config=llm_config, 
-            system_instruction=system_instruction, 
-            mcp_toolset=mcp.get_toolset(),
-            allowed_mcp_tools=[
-                "list_files",
-                "get_line_range",
-                "search_files",
-                "find_python_definition",
-                "replace_in_files",
-                "fuzzy_replace_in_file",
-                "multiline_replace_in_file",
-                "run_ruff_check"
-            ]
-        )
+        # Create persistent event loop for clean async handling
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
-        subagent.query(query="Fix all syntax errors in the project code.", debug=True)
+        try:
+            allowed_tools = [
+                    "list_files",
+                    "get_line_range",
+                    "search_files",
+                    "find_python_definition",
+                    "replace_in_files",
+                    "fuzzy_replace_in_file",
+                    "multiline_replace_in_file",
+                    "run_ruff_check"
+                ]
+            # To use GoogleAIAgent: uncomment import above and this will automatically use SubAgentGoogle
+            subagent = SubAgentBase(
+                llm=llm,
+                model="gemini-2.5-flash-lite", 
+                token_tracker=token_tracker,
+                base_config=llm_config, 
+                system_instruction=system_instruction, 
+                mcp_toolset=mcp.get_toolset(allowed_tools)
+            )
+
+            nrounds = 5
+            success_rounds = []
+
+            for round_num in range(nrounds):            
+                prepare_test_files(test_name)
+
+                loop.run_until_complete(
+                    subagent.query(query="Fix all syntax errors in the project code.", debug=True)
+                )
+
+                # run ruff check to verify no syntax errors remain
+                project = ProjectFolder(f"solutions/{test_name}")
+                ruff_result = project.run_ruff_check()
+                if ruff_result.get('success', False):
+                    print(f"\n✅ All syntax errors fixed!")
+                    success_rounds.append(round_num)
+                else:
+                    print(f"\n🔄 Syntax errors still remain") 
+                    print(f"Issues: {ruff_result.get('issues', [])}")      
+
+            print("="*80)
+            print(f"\nTest completed: {len(success_rounds)} out of {nrounds} rounds successful")
+            print(f"Successful rounds: {success_rounds}")
+            token_tracker.print_summary()
+        finally:
+            # Cleanup pending tasks before closing loop
+            try:
+                pending = asyncio.all_tasks(loop)
+                if pending:
+                    # Cancel all pending tasks
+                    for task in pending:
+                        task.cancel()
+                    
+                    # Wait for cancellation to complete
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+            except Exception:
+                pass  # Ignore cleanup errors
+            finally:
+                loop.close()
+            
     finally:
         mcp.stop()
-        # Print token usage summary
-        token_tracker.print_summary()
 
 
 # --- CLI Test Run ---
