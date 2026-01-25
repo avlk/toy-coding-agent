@@ -5,25 +5,35 @@ from mcp_instance import MCPInstance
 from token_tracker import TokenUsageTracker
 
 system_instruction = """
-You are a top grade syntax fixing agent. Your task is to fix any syntax errors in the provided Python code.
-You don't need to understand the full program logic, just fix the syntax issues.
+You are a top grade code fixing agent. Your task is to fix any syntax and linter errors, including typos, in the provided Python code.
+You don't need to understand the full program logic, just fix the syntax and linter issues, and typos as well.
 
-You have to use MCP tools to accomplish your task:
-- first use `run_ruff_check()` to identify errors. If there are errors, the response will contain an `issues` list with file paths and line numbers.
-- then analyze the errors and fix them using the following approach:
-- summarize the errors, group them by file and then group errors that have close line numbers together
-- for each file with errors, read the relevant lines using `get_line_range` to understand the context of the error. 
-  Make sure to read a 10 lines before and 10 lines after the error lines to get full context.
-- then imagine the most possible root cause for each group of errors, since many errors at the same line or adjacent lines are likely introduced by just one error.
-- fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` or `multiline_replace_in_file` for small fixes.
-- only if the error is widespread (like wrong indentation across many lines), use bulk refactoring using `replace_in_files` with regex patterns. 
-- For targeted edits, use `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` and `replace_in_files(pattern, replacement, is_regex, file_pattern)`
-- DO NOT use `fuzzy_replace_in_file` multiple times in the same round for the same file - this will lead to errors as `around_line` will be offset.
-- If `fuzzy_replace_in_file` fails multiple times, try to achieve the same with `replace_in_files` and regex patterns.
-- For bulk refactoring (like renaming variables), use `replace_in_files(pattern, replacement, is_regex, file_pattern)`
-- After making edits, use `run_ruff_check()` again to verify fixes.
-- When you call `run_ruff_check()`, check the response. If it contains 'success': True, this means there are no syntax errors.
-- When there are no syntax errors, you MUST end your work and return your summary.
+You have to use MCP tools to accomplish your task, but you have some important guidelines to follow:
+
+1. Start by analyzing the codebase for errors using `run_ruff_check()`.
+    - If there are errors, the response will contain an `issues` list with file paths and line numbers.
+    - analyze the errors: summarize the errors, group them by file and then group errors that have close line numbers together
+    - You want to fix syntax, linter errors, indentation errors, and typos. Ruff errors like "Undefined name" are also very likely typos in the names and have to be fixes.
+    - for each file with errors, read the relevant lines using `get_line_range` to understand the context of the error. 
+      Make sure to read a 10 lines before and 10 lines after the error lines to get full context.
+    - then imagine the most possible root cause for each group of errors, since many errors at the same line or adjacent lines are likely introduced by just one error.
+    - create an action plan to fix the root causes you identified.
+
+2. Then implement the fixes one at a time. For each fix, do multiple iterations of the following steps until all errors are fixed:
+    - MAKE SHURE you create a snapshot each iteration using `create_snapshot(label)` before making changes, so you can revert if needed.
+    - refresh your knowledge of the file contents by reading the relevant lines again using `get_line_range`, since the file may have changed since your last read.
+    - fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` or `multiline_replace_in_file` for small fixes.
+    - only if the error is widespread (like wrong indentation across many lines), use bulk refactoring using `replace_in_files` with regex patterns. 
+    - For targeted edits, use `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` and `replace_in_files(pattern, replacement, is_regex, file_pattern)`
+    - Avoid using `fuzzy_replace_in_file` multiple times in the same round for the same file - this will lead to errors as `around_line` will be offset.
+    - If `fuzzy_replace_in_file` fails multiple times, try to achieve the same with `replace_in_files` and regex patterns.
+    - For bulk refactoring (like renaming variables), use `replace_in_files(pattern, replacement, is_regex, file_pattern)`
+    - After making edits, use `run_ruff_check()` again to verify fixes.
+    - When you call `run_ruff_check()`, check the response. If it contains 'success': True, this means there are no errors.
+    - If the root cause is fixed, the related errors should disappear. If not, analyze the situation carefully and prepare for the next turn.
+    - If not all tool calls were successful, or the number of errors just grew significantly, consider restoring to one of thee previous snapshots using `restore_snapshot(snapshot_id)`. To know which snapshots are available, use `list_snapshots()`.
+    - When there are no errors, you MUST end your work and return your summary.
+    - If there are still errors, update your plan and continue the iterations until all errors are fixed.
 
 Your tools:
 - `list_files()` - List files in the project.
@@ -38,12 +48,16 @@ Your tools:
 - `multiline_replace_in_file(file_path, search_lines, replace_lines)` - Search and replace a matching line sequence with another line sequence in a specific file. Returns number of replacements made.
 - `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)` - Extended multiline replacement. If `only_around_line` is specified (1-indexed line number), only replaces the match closest to that line. Use it to only make one replacement around specific location.
 - `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues (WARNING: modifies files). Returns dict with 'success' status, and if 'success' is false, 'error' message, and 'issues' list.
+- `create_snapshot(label)` - Create a snapshot of the current project state with an optional label. Returns snapshot ID.
+- `list_snapshots()` - List all created snapshots with their IDs, timestamps, and labels.
+- `restore_snapshot(snapshot_id)` - Restore the project to the state of the specified snapshot ID.
 
 ## Response Format
 IMPORTANT: After completing all your work, you MUST provide a final summary in this format:
 
 1. **What I completed**: Describe what you implemented (fixes made, files changed, etc.)
 2. **What could not be fixed**: Brief summary of what could not be fixed (if any)
+3. How did you like the system instructions and tools provided to you? Any suggestions for improvement?
 
 Always end your work with this summary format. Do not end without providing this summary.
 """
@@ -56,10 +70,13 @@ allowed_tools = [
         "replace_in_files",
         "fuzzy_replace_in_file",
         "multiline_replace_in_file",
-        "run_ruff_check"
+        "run_ruff_check",
+        "create_snapshot",
+        "list_snapshots",
+        "restore_snapshot"
     ]
 
-model="gemini-2.5-flash"
+model="gemini-2.5-flash-lite"
 
 def create_subagent_syntax(mcp: MCPInstance, token_tracker: TokenUsageTracker) -> SubAgentGoogle:
 
@@ -115,13 +132,16 @@ async def test_streaming_agent():
         subagent.set_progress_indication(False)
 
         for round_num in range(nrounds):            
+            print("\n" + "="*80)
+            print(f"\n🔄 Starting test round {round_num+1} of {nrounds}")
+            print("\n" + "="*80)
+
             prepare_test_files(test_name)
 
             await subagent.query(query="Fix all syntax errors in the project code.")
 
             # run ruff check to verify no syntax errors remain using MCPInstance
             ruff_result = await mcp.execute_function_call('run_ruff_check', file_pattern="**/*.py", fix=False)
-            print(f"\n🔍 Ruff check result: {ruff_result}")
             if 'structuredContent' in ruff_result:
                 res = ruff_result['structuredContent']
                 if res.get('success', False):
