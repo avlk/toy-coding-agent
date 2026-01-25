@@ -780,7 +780,7 @@ class ProjectFolder:
         search_lines: List[str],
         replace_lines: List[str],
         around_line: int
-    ) -> Optional[int]:
+    ) -> Tuple[str, Optional[int]]:
         """
         Search and replace a multiline pattern in a specific file using fuzzy matching.
         
@@ -818,13 +818,14 @@ class ProjectFolder:
                 code_lines = [line.rstrip('\n\r') for line in f]
             
             # Convert 1-indexed to 0-indexed for around_line
-            around_line_0based = around_line - 1
-            
+            around_line -= 1
+            start_range = range(max(0, around_line - 5), min(len(code_lines), around_line + 6))
+
             # Perform fuzzy replacement
-            matched_line_0based = fuzzy_multiline_replace(code_lines, search_lines, replace_lines, around_line_0based)
+            matched_line = fuzzy_multiline_replace(code_lines, search_lines, replace_lines, start_range=start_range)
             
             # Save if replacement was made
-            if matched_line_0based is not None:
+            if matched_line is not None:
                 with open(full_path, 'w', encoding='utf-8') as f:
                     f.write('\n'.join(code_lines))
                 
@@ -832,13 +833,17 @@ class ProjectFolder:
                 self._clear_metadata_cache(full_path)
                 
                 rel_path = str(full_path.relative_to(self.code_path))
-                matched_line_1based = matched_line_0based + 1
-                logger.info(f"fuzzy_replace_in_file({rel_path}): replacement at line {matched_line_1based}")
+                logger.info(f"fuzzy_replace_in_file({rel_path}): replacement at line {matched_line + 1}")
                 
-                return matched_line_1based
+                return "Replace successful", matched_line + 1
+            
+            # if no match was found, try to match wider and return a matching line if found
+            matched_line = fuzzy_multiline_replace(code_lines, search_lines, replace_lines, start_range=range(0, len(code_lines)))
+            if matched_line is not None:
+                return f"Could not find close match around line {around_line + 1}, but there is a match for this search pattern at line {matched_line + 1}. Try adjusting the around_line parameter.", None
             else:
-                return None
-        
+                return "No matching pattern found in the whole file. I tried to find the pattern in the whole file, and it wasn't found. ", None
+            
         except UnicodeDecodeError:
             raise ProjectFolderError(f"File is not a text file: {file_path}")
         except ProjectFolderError:

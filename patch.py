@@ -555,7 +555,7 @@ def multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str],
     return len(matches)
 
 
-def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str], around_line: int) -> int | None:
+def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str], start_range: range) -> int | None:
     """
     Find a close match for sequence of strings around specified position and replace them.
     
@@ -566,7 +566,7 @@ def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list
         code_lines: List of code lines to modify (modified in place)
         s_str: Sequence of strings to do an approximate match for
         r_str: Sequence of strings to replace with
-        around_line: Replace the match closest to this line number (0-based)
+        start_range: Range of line numbers to search for a match starting position
     
     Returns:
         True matching line number where a replacement was made, None otherwise
@@ -582,13 +582,14 @@ def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list
 
     # Starting line boundaries
     search_len = len(s_str)
-    start_search = max(0, around_line - TOLERANCE)
-    end_search = min(len(code_lines) - search_len, around_line + TOLERANCE)  + 1
+
+    start_range = range(start_range[0], min(start_range[-1], len(code_lines) - search_len) + 1)
+
     match_index = -1
     match_distance = MAX_DISTANCE + 1
 
     # Find all non-overlapping matches
-    for i in range(start_search, end_search):
+    for i in start_range:
         # Check if sequence matches at position i
         distance = sum(Levenshtein.distance(code_lines[i + j], s_str[j]) for j in range(search_len))
         

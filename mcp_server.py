@@ -696,9 +696,9 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             logger.debug(f"search_lines[{i}] = {line!r}")
         
         try:
-            matched_line = pf.fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)
+            message, matched_line = pf.fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)
             if matched_line is None:
-                error_details = f"No approximate match found near line {around_line}. The search pattern may be too different from actual code, or outside the search tolerance (±5 lines)."
+                error_details = message
                 
                 return {
                     'success': False,

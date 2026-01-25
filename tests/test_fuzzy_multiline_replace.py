@@ -25,7 +25,7 @@ def test_exact_match_at_target_line():
         "    return False",
     ]
     
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=0)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 1))
     
     assert result == 0
     assert code_lines[0] == "def hello():"
@@ -56,7 +56,7 @@ def test_match_with_small_differences():
         "    return total",
     ]
     
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=0)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 1))
     
     assert result == 0
     assert code_lines[0] == "def compute(a, b):"
@@ -87,7 +87,7 @@ def test_match_within_tolerance():
     ]
     
     # Target line 1, but actual match at line 3 (within TOLERANCE=5)
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=1)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 6))
     
     assert result == 3
     assert code_lines[3] == "def new_function():"
@@ -113,7 +113,7 @@ def test_no_match_distance_too_large():
         "# Replacement",
     ]
     
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=0)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 1))
     
     assert result is None
     # Code should remain unchanged
@@ -121,7 +121,7 @@ def test_no_match_distance_too_large():
     assert code_lines[1] == "    print('Hello World')"
 
 
-def test_no_match_outside_tolerance():
+def test_no_match_outside_range():
     """Test that no match is found when match is outside TOLERANCE range."""
     code_lines = [
         "line 0",
@@ -142,8 +142,8 @@ def test_no_match_outside_tolerance():
     s_str = ["target line"]
     r_str = ["replaced line"]
     
-    # Search around line 0, but match is at line 11 (difference > TOLERANCE=5)
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=0)
+    # Search around lines 0..10, but match is at line 11
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 11))
     
     assert result is None
     assert code_lines[11] == "target line"  # Unchanged
@@ -155,7 +155,7 @@ def test_empty_search_string():
     s_str = []
     r_str = ["replacement"]
     
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=0)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 10))
     
     assert result is None  # Function returns None for empty search
     # Code should remain unchanged
@@ -173,7 +173,7 @@ def test_single_line_replacement():
     s_str = ["import sys"]
     r_str = ["import subprocess"]
     
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=1)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 3))
     
     assert result == 1
     assert code_lines == ["import os", "import subprocess", "import json"]
@@ -203,7 +203,7 @@ def test_multiline_with_varying_distances():
     ]
     
     # Around line 2, should match the first function (lines 0-1, closer and exact)
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=2)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 7))
     
     assert result == 0
     assert code_lines[0] == "def baz(x):"
@@ -223,7 +223,7 @@ def test_replacement_at_file_start():
     s_str = ["first line"]
     r_str = ["new first line"]
     
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=0)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 1))
     
     assert result == 0
     assert code_lines[0] == "new first line"
@@ -240,7 +240,7 @@ def test_replacement_at_file_end():
     s_str = ["last line"]
     r_str = ["new last line"]
     
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=2)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 3))
     
     assert result == 2
     assert code_lines[2] == "new last line"
@@ -267,7 +267,7 @@ def test_multiline_size_change():
         "    return x + y",
     ]
     
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=0)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 1))
     
     assert result == 0
     assert len(code_lines) == 6  # 4 new lines + 1 empty + 1 print
@@ -297,22 +297,22 @@ def test_whitespace_differences():
         "    return y",
     ]
     
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=0)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 1))
     
     # Should still match due to small Levenshtein distance
     assert result == 0
     assert code_lines[1] == "    y = 2"
 
 
-def test_prefers_closer_line_when_equal_distance():
+def test_prefers_better_match():
     """Test that function prefers match closer to around_line when distances are equal."""
     code_lines = [
         "line 0",
-        "target",  # Line 1
+        "barget",  # Line 1
         "line 2",
         "line 3",
         "line 4",
-        "target",  # Line 5
+        "tambet",  # Line 5
         "line 6",
     ]
     
@@ -320,11 +320,11 @@ def test_prefers_closer_line_when_equal_distance():
     r_str = ["replaced"]
     
     # Search around line 1, should match line 1 (not line 5)
-    result = fuzzy_multiline_replace(code_lines, s_str, r_str, around_line=1)
+    result = fuzzy_multiline_replace(code_lines, s_str, r_str, start_range=range(0, 6))
     
     assert result == 1
     assert code_lines[1] == "replaced"
-    assert code_lines[5] == "target"  # Unchanged
+    assert code_lines[5] == "tambet"  # Unchanged
 
 
 if __name__ == "__main__":
