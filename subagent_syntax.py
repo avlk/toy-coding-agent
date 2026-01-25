@@ -92,7 +92,7 @@ def prepare_test_files(test_name: str):
         shutil.rmtree(f"solutions/{test_name}")
     shutil.copytree(f"test_sets/{test_name}", f"solutions/{test_name}")
 
-def test_streaming_agent():
+async def test_streaming_agent():
     # Filter out deprecation warnings from google-adk since they use their own deprecated APIs
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     warnings.filterwarnings("ignore", category=UserWarning)
@@ -102,62 +102,64 @@ def test_streaming_agent():
     token_tracker = TokenUsageTracker()
 
     mcp = MCPInstance(project_path=f"solutions/{test_name}")
-    mcp.start()
-    time.sleep(5) # Give server time to start
+    if not await mcp.start():
+        print("Failed to start MCP server")
+        return
 
     nrounds = 5
     success_rounds = []
-    try:
-        # Create persistent event loop for clean async handling
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         
-        try:
-            subagent = create_subagent_syntax(mcp, token_tracker)
-            subagent.set_debug(True)
-            subagent.set_progress_indication(False)
+    try:
+        subagent = create_subagent_syntax(mcp, token_tracker)
+        subagent.set_debug(True)
+        subagent.set_progress_indication(False)
 
-            for round_num in range(nrounds):            
-                prepare_test_files(test_name)
+        for round_num in range(nrounds):            
+            prepare_test_files(test_name)
 
-                loop.run_until_complete(
-                    subagent.query(query="Fix all syntax errors in the project code.")
-                )
+            await subagent.query(query="Fix all syntax errors in the project code.")
 
-                # run ruff check to verify no syntax errors remain
-                project = ProjectFolder(f"solutions/{test_name}")
-                ruff_result = project.run_ruff_check()
-                if ruff_result.get('success', False):
+            # run ruff check to verify no syntax errors remain using MCPInstance
+            ruff_result = await mcp.execute_function_call('run_ruff_check', file_pattern="**/*.py", fix=False)
+            print(f"\n🔍 Ruff check result: {ruff_result}")
+            if 'structuredContent' in ruff_result:
+                res = ruff_result['structuredContent']
+                if res.get('success', False):
                     print(f"\n✅ All syntax errors fixed!")
                     success_rounds.append(round_num)
                 else:
                     print(f"\n🔄 Syntax errors still remain") 
-                    print(f"Issues: {ruff_result.get('issues', [])}")      
-
-            print("="*80)
-            print(f"\nTest completed: {len(success_rounds)} out of {nrounds} rounds successful")
-            print(f"Successful rounds: {success_rounds}")
-            token_tracker.print_summary()
-        finally:
-            # Cleanup pending tasks before closing loop
-            try:
-                pending = asyncio.all_tasks(loop)
-                if pending:
-                    # Cancel all pending tasks
-                    for task in pending:
-                        task.cancel()
-                    
-                    # Wait for cancellation to complete
-                    loop.run_until_complete(
-                        asyncio.gather(*pending, return_exceptions=True)
-                    )
-            except Exception:
-                pass  # Ignore cleanup errors
-            finally:
-                loop.close()
-            
+                    print(f"Issues: {res.get('issues', [])}")      
+            else:
+                print(f"\n❗ Unexpected Ruff result format")
+        print("="*80)
+        print(f"\nTest completed: {len(success_rounds)} out of {nrounds} rounds successful")
+        print(f"Successful rounds: {success_rounds}")
+        token_tracker.print_summary()
     finally:
         mcp.stop()
 
 if __name__ == "__main__":
-    test_streaming_agent()
+    try:
+        # Create persistent event loop for clean async handling
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        loop.run_until_complete(test_streaming_agent())
+    finally:
+        # Cleanup pending tasks before closing loop
+        try:
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                # Cancel all pending tasks
+                for task in pending:
+                    task.cancel()
+                
+                # Wait for cancellation to complete
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+        except Exception:
+            pass  # Ignore cleanup errors
+        finally:
+            loop.close()
