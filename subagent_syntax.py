@@ -89,8 +89,8 @@ import warnings
 def prepare_test_files(test_name: str):
     # Copy test files to solutions/{test_name}
     if os.path.exists(f"solutions/{test_name}"):
-        shutil.rmtree(f"solutions/{test_name}")
-    shutil.copytree(f"test_sets/{test_name}", f"solutions/{test_name}")
+        shutil.rmtree(f"solutions/{test_name}/")
+    shutil.copytree(f"test_sets/{test_name}", f"solutions/{test_name}/current/code")
 
 async def test_streaming_agent():
     # Filter out deprecation warnings from google-adk since they use their own deprecated APIs

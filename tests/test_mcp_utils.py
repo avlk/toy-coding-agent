@@ -15,6 +15,7 @@ import pytest
 import tempfile
 import shutil
 import os
+import json
 from pathlib import Path
 import sys
 
@@ -26,10 +27,14 @@ from mcp_utils import ProjectFolder, ProjectFolderError
 
 @pytest.fixture
 def temp_project():
-    """Create a temporary project directory with test files."""
+    """Create a temporary project directory with test files in the new structure."""
     temp_dir = tempfile.mkdtemp(prefix="test_mcp_")
     
-    # Create test file structure
+    # Create the new directory structure: base_path/current/code/
+    code_dir = Path(temp_dir) / "current" / "code"
+    code_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create test file structure in the code directory
     test_files = {
         "simple.txt": "Line 1\nLine 2\nLine 3",
         "test.py": """def function_one():
@@ -57,7 +62,7 @@ def function_two(x, y):
     }
     
     for rel_path, content in test_files.items():
-        file_path = Path(temp_dir) / rel_path
+        file_path = code_dir / rel_path
         file_path.parent.mkdir(parents=True, exist_ok=True)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
@@ -80,7 +85,8 @@ class TestProjectFolderInit:
     def test_init_with_valid_path(self, temp_project):
         """Test initialization with valid project path."""
         pf = ProjectFolder(temp_project)
-        assert pf.project_path == Path(temp_project).resolve()
+        assert pf.base_path == Path(temp_project).resolve()
+        assert pf.code_path == Path(temp_project).resolve() / "current" / "code"
     
     def test_init_with_relative_path(self, temp_project):
         """Test initialization with relative path."""
@@ -92,8 +98,8 @@ class TestProjectFolderInit:
             rel_path = Path(temp_project).name
             
             pf = ProjectFolder(rel_path)
-            assert pf.project_path.is_absolute()
-            assert pf.project_path == Path(temp_project).resolve()
+            assert pf.base_path.is_absolute()
+            assert pf.base_path == Path(temp_project).resolve()
         finally:
             os.chdir(original_cwd)
     
@@ -104,7 +110,7 @@ class TestProjectFolderInit:
     
     def test_init_with_file_path(self, temp_project):
         """Test initialization with a file instead of directory."""
-        file_path = Path(temp_project) / "simple.txt"
+        file_path = Path(temp_project) / "current" / "code" / "simple.txt"
         with pytest.raises(ProjectFolderError, match="not a directory"):
             ProjectFolder(str(file_path))
 
@@ -113,36 +119,36 @@ class TestPathValidation:
     
     def test_validate_path_with_relative_path(self, project_folder):
         """Test validation of relative path within project."""
-        result = project_folder._validate_path("simple.txt")
+        result = project_folder._validate_code_path("simple.txt")
         assert result.is_absolute()
         assert result.name == "simple.txt"
     
     def test_validate_path_rejects_absolute_path(self, project_folder):
         """Test that absolute paths are rejected."""
-        abs_path = project_folder.project_path / "simple.txt"
+        abs_path = project_folder.code_path / "simple.txt"
         with pytest.raises(ProjectFolderError, match="Absolute paths are not allowed"):
-            project_folder._validate_path(str(abs_path))
+            project_folder._validate_code_path(str(abs_path))
     
     def test_validate_path_with_subdirectory(self, project_folder):
         """Test validation of path in subdirectory."""
-        result = project_folder._validate_path("subdir/nested.py")
+        result = project_folder._validate_code_path("subdir/nested.py")
         assert result.is_absolute()
         assert "subdir" in str(result)
     
     def test_validate_path_rejects_parent_traversal(self, project_folder):
         """Test that parent directory traversal is rejected."""
         with pytest.raises(ProjectFolderError, match="outside the project folder"):
-            project_folder._validate_path("../outside.txt")
+            project_folder._validate_code_path("../outside.txt")
     
     def test_validate_path_rejects_absolute_outside(self, project_folder):
         """Test that absolute path outside project is rejected."""
         with pytest.raises(ProjectFolderError, match="Absolute paths are not allowed"):
-            project_folder._validate_path("/etc/passwd")
+            project_folder._validate_code_path("/etc/passwd")
     
     def test_validate_path_rejects_complex_traversal(self, project_folder):
         """Test that complex traversal attempts are rejected."""
         with pytest.raises(ProjectFolderError, match="outside the project folder"):
-            project_folder._validate_path("subdir/../../outside.txt")
+            project_folder._validate_code_path("subdir/../../outside.txt")
 
 
 class TestMetadataCaching:
@@ -150,19 +156,19 @@ class TestMetadataCaching:
     
     def test_metadata_basic(self, project_folder):
         """Test basic line counting."""
-        file_path = project_folder.project_path / "simple.txt"
+        file_path = project_folder.code_path / "simple.txt"
         metadata = project_folder.get_metadata(file_path)
         assert metadata['size_lines'] == 3
     
     def test_metadata_empty_file(self, project_folder):
         """Test line counting for empty file."""
-        file_path = project_folder.project_path / "empty.txt"
+        file_path = project_folder.code_path / "empty.txt"
         metadata = project_folder.get_metadata(file_path)
         assert metadata['size_lines'] == 0
     
     def test_metadata_uses_cache(self, project_folder):
         """Test that metadata is cached."""
-        file_path = project_folder.project_path / "simple.txt"
+        file_path = project_folder.code_path / "simple.txt"
         
         # First call - should cache
         metadata1 = project_folder.get_metadata(file_path)
@@ -174,7 +180,7 @@ class TestMetadataCaching:
     
     def test_metadata_invalidates_on_modification(self, project_folder):
         """Test that cache is invalidated when file is modified."""
-        file_path = project_folder.project_path / "simple.txt"
+        file_path = project_folder.code_path / "simple.txt"
         
         # Get initial count
         metadata1 = project_folder.get_metadata(file_path)
@@ -192,7 +198,7 @@ class TestMetadataCaching:
     
     def testget_metadata_nonexistent_file(self, project_folder):
         """Test metadata for non-existent file returns error."""
-        file_path = project_folder.project_path / "nonexistent.txt"
+        file_path = project_folder.code_path / "nonexistent.txt"
         metadata = project_folder.get_metadata(file_path)
         assert metadata['error'] is not None
 
@@ -315,7 +321,7 @@ class TestCreateFile:
         assert result['metadata']['path'] == 'new.txt'
         
         # Verify file exists
-        file_path = project_folder.project_path / "new.txt"
+        file_path = project_folder.code_path / "new.txt"
         assert file_path.exists()
         with open(file_path, 'r') as f:
             assert f.read() == "New content"
@@ -328,7 +334,7 @@ class TestCreateFile:
         assert 'metadata' in result
         
         # Verify file and directory exist
-        file_path = project_folder.project_path / "newdir" / "newfile.txt"
+        file_path = project_folder.code_path / "newdir" / "newfile.txt"
         assert file_path.exists()
         assert file_path.parent.is_dir()
     
@@ -342,7 +348,7 @@ class TestCreateFile:
         assert 'already exists' in result['message']
         
         # Verify original content is preserved
-        file_path = project_folder.project_path / "simple.txt"
+        file_path = project_folder.code_path / "simple.txt"
         with open(file_path, 'r') as f:
             assert f.read() == "Line 1\nLine 2\nLine 3"
     
@@ -354,14 +360,14 @@ class TestCreateFile:
         assert 'metadata' in result
         
         # Verify content is overwritten
-        file_path = project_folder.project_path / "simple.txt"
+        file_path = project_folder.code_path / "simple.txt"
         with open(file_path, 'r') as f:
             assert f.read() == "New content"
     
     def test_create_file_updates_cache(self, project_folder):
         """Test that creating file with overwrite updates cache with new line count."""
         file_name = "simple.txt"
-        file_path = project_folder.project_path / file_name
+        file_path = project_folder.code_path / file_name
         
         # Cache the file (original has 3 lines)
         old_metadata = project_folder.get_metadata(file_path)
@@ -391,7 +397,7 @@ class TestCreateFile:
         
         assert result['status'] == 'success'
         assert 'metadata' in result
-        file_path = project_folder.project_path / "empty_new.txt"
+        file_path = project_folder.code_path / "empty_new.txt"
         assert file_path.exists()
         assert file_path.stat().st_size == 0
     
@@ -438,7 +444,7 @@ class TestCreateFile:
         assert 'metadata' in result2
         
         # Verify file content is still correct
-        file_path = project_folder.project_path / "test_unchanged.txt"
+        file_path = project_folder.code_path / "test_unchanged.txt"
         with open(file_path, 'r') as f:
             assert f.read() == original_content
 
@@ -454,7 +460,7 @@ class TestRemoveFile:
         assert path == "simple.txt"
         
         # Verify file is removed
-        file_path = project_folder.project_path / "simple.txt"
+        file_path = project_folder.code_path / "simple.txt"
         assert not file_path.exists()
     
     def test_remove_file_from_subdirectory(self, project_folder):
@@ -463,13 +469,13 @@ class TestRemoveFile:
         
         assert isinstance(path, str)
         
-        file_path = project_folder.project_path / "subdir" / "data.txt"
+        file_path = project_folder.code_path / "subdir" / "data.txt"
         assert not file_path.exists()
     
     def test_remove_file_clears_cache(self, project_folder):
         """Test that removing file clears cache."""
         file_name = "simple.txt"
-        file_path = project_folder.project_path / file_name
+        file_path = project_folder.code_path / file_name
         
         # Cache the file
         project_folder.get_metadata(file_path)
@@ -757,7 +763,7 @@ class TestHelperFunctions:
     
     def testget_metadata(self, project_folder):
         """Test file metadata extraction."""
-        file_path = project_folder.project_path / "simple.txt"
+        file_path = project_folder.code_path / "simple.txt"
         metadata = project_folder.get_metadata(file_path)
         
         assert 'path' in metadata
@@ -772,7 +778,7 @@ class TestEdgeCases:
     
     def test_file_with_no_newline_at_end(self, temp_project):
         """Test handling file with no newline at end."""
-        file_path = Path(temp_project) / "no_newline.txt"
+        file_path = Path(temp_project) / "current" / "code" / "no_newline.txt"
         with open(file_path, 'w') as f:
             f.write("Line 1\nLine 2")  # No newline at end
         
@@ -783,7 +789,7 @@ class TestEdgeCases:
     
     def test_file_with_only_newlines(self, temp_project):
         """Test file with only newlines."""
-        file_path = Path(temp_project) / "newlines.txt"
+        file_path = Path(temp_project) / "current" / "code" / "newlines.txt"
         with open(file_path, 'w') as f:
             f.write("\n\n\n")
         
@@ -1024,6 +1030,358 @@ class TestMultilineReplaceInFile:
         
         # Should not match because "line2" != "line2 extra"
         assert result == 0
+
+
+class TestSnapshotOperations:
+    """Tests for snapshot operations (create_snapshot, list_snapshots, restore_snapshot)."""
+    
+    def test_create_snapshot_basic(self, project_folder):
+        """Test creating a basic snapshot."""
+        # Create some files in the code folder
+        project_folder.create_file("test.py", "print('hello')")
+        project_folder.create_file("data.txt", "test data")
+        
+        # Create a snapshot
+        snapshot_id = project_folder.create_snapshot(label="Test snapshot")
+        
+        # Verify snapshot ID is returned
+        assert snapshot_id is not None
+        assert snapshot_id == "1"
+        
+        # Verify snapshot directory exists
+        snapshot_path = project_folder.history_path / snapshot_id
+        assert snapshot_path.exists()
+        assert snapshot_path.is_dir()
+        
+        # Verify code folder was copied
+        code_snapshot_path = snapshot_path / "code"
+        assert code_snapshot_path.exists()
+        assert (code_snapshot_path / "test.py").exists()
+        assert (code_snapshot_path / "data.txt").exists()
+        
+        # Verify metadata was created
+        metadata_path = snapshot_path / "metadata.json"
+        assert metadata_path.exists()
+        
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        
+        assert metadata['id'] == snapshot_id
+        assert metadata['label'] == "Test snapshot"
+        assert 'timestamp' in metadata
+    
+    def test_create_snapshot_without_label(self, project_folder):
+        """Test creating a snapshot without a label."""
+        project_folder.create_file("test.py", "print('hello')")
+        
+        snapshot_id = project_folder.create_snapshot()
+        
+        # Verify default label was created
+        metadata_path = project_folder.history_path / snapshot_id / "metadata.json"
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        
+        assert 'Snapshot at' in metadata['label']
+        assert metadata['id'] == snapshot_id
+    
+    def test_create_snapshot_increments_id(self, project_folder):
+        """Test that snapshot IDs increment properly."""
+        project_folder.create_file("test.py", "version 1")
+        
+        snapshot_id_1 = project_folder.create_snapshot(label="Version 1")
+        assert snapshot_id_1 == "1"
+        
+        project_folder.create_file("test.py", "version 2", overwrite=True)
+        snapshot_id_2 = project_folder.create_snapshot(label="Version 2")
+        assert snapshot_id_2 == "2"
+        
+        project_folder.create_file("test.py", "version 3", overwrite=True)
+        snapshot_id_3 = project_folder.create_snapshot(label="Version 3")
+        assert snapshot_id_3 == "3"
+    
+    def test_create_snapshot_with_subdirectories(self, project_folder):
+        """Test creating a snapshot with nested directory structure."""
+        project_folder.create_file("main.py", "main")
+        project_folder.create_file("subdir/module.py", "module")
+        project_folder.create_file("subdir/nested/deep.py", "deep")
+        
+        snapshot_id = project_folder.create_snapshot(label="With subdirs")
+        
+        code_snapshot_path = project_folder.history_path / snapshot_id / "code"
+        assert (code_snapshot_path / "main.py").exists()
+        assert (code_snapshot_path / "subdir" / "module.py").exists()
+        assert (code_snapshot_path / "subdir" / "nested" / "deep.py").exists()
+    
+    def test_create_snapshot_excludes_patterns(self, project_folder):
+        """Test that snapshot excludes files matching exclude patterns."""
+        # Create files that should be included
+        project_folder.create_file("main.py", "main")
+        
+        # Create files that should be excluded (directories may be created but files inside should be excluded)
+        venv_path = project_folder.code_path / ".venv" / "lib" / "file.py"
+        venv_path.parent.mkdir(parents=True, exist_ok=True)
+        venv_path.write_text("venv file")
+        
+        cache_path = project_folder.code_path / "__pycache__" / "module.pyc"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text("cached")
+        
+        snapshot_id = project_folder.create_snapshot(label="With exclusions")
+        
+        code_snapshot_path = project_folder.history_path / snapshot_id / "code"
+        
+        # Verify included file is there
+        assert (code_snapshot_path / "main.py").exists()
+        
+        # Verify excluded files are not copied (though directories might be created)
+        assert not (code_snapshot_path / ".venv" / "lib" / "file.py").exists()
+        assert not (code_snapshot_path / "__pycache__" / "module.pyc").exists()
+    
+    def test_create_snapshot_copies_checklists(self, project_folder):
+        """Test that snapshot copies the checklists folder."""
+        # Create checklist files
+        checklist_path = project_folder.checklists_path / "checklist1.txt"
+        checklist_path.write_text("Task 1\nTask 2")
+        
+        snapshot_id = project_folder.create_snapshot(label="With checklists")
+        
+        # Verify checklists were copied
+        checklists_snapshot_path = project_folder.history_path / snapshot_id / "checklists"
+        assert checklists_snapshot_path.exists()
+        assert (checklists_snapshot_path / "checklist1.txt").exists()
+        
+        content = (checklists_snapshot_path / "checklist1.txt").read_text()
+        assert content == "Task 1\nTask 2"
+    
+    def test_list_snapshots_empty(self, project_folder):
+        """Test listing snapshots when none exist."""
+        snapshots = project_folder.list_snapshots()
+        assert snapshots == []
+    
+    def test_list_snapshots_single(self, project_folder):
+        """Test listing a single snapshot."""
+        project_folder.create_file("test.py", "test")
+        snapshot_id = project_folder.create_snapshot(label="First snapshot")
+        
+        snapshots = project_folder.list_snapshots()
+        
+        assert len(snapshots) == 1
+        assert snapshots[0]['id'] == snapshot_id
+        assert snapshots[0]['label'] == "First snapshot"
+        assert 'timestamp' in snapshots[0]
+    
+    def test_list_snapshots_multiple(self, project_folder):
+        """Test listing multiple snapshots."""
+        project_folder.create_file("test.py", "v1")
+        snapshot_id_1 = project_folder.create_snapshot(label="Version 1")
+        
+        project_folder.create_file("test.py", "v2", overwrite=True)
+        snapshot_id_2 = project_folder.create_snapshot(label="Version 2")
+        
+        project_folder.create_file("test.py", "v3", overwrite=True)
+        snapshot_id_3 = project_folder.create_snapshot(label="Version 3")
+        
+        snapshots = project_folder.list_snapshots()
+        
+        assert len(snapshots) == 3
+        assert snapshots[0]['id'] == snapshot_id_1
+        assert snapshots[1]['id'] == snapshot_id_2
+        assert snapshots[2]['id'] == snapshot_id_3
+        assert snapshots[0]['label'] == "Version 1"
+        assert snapshots[1]['label'] == "Version 2"
+        assert snapshots[2]['label'] == "Version 3"
+    
+    def test_list_snapshots_ordered_by_id(self, project_folder):
+        """Test that snapshots are listed in order by ID."""
+        for i in range(5):
+            project_folder.create_file("test.py", f"version {i}")
+            project_folder.create_snapshot(label=f"v{i}")
+        
+        snapshots = project_folder.list_snapshots()
+        
+        assert len(snapshots) == 5
+        # Verify IDs are in ascending order
+        ids = [int(s['id']) for s in snapshots]
+        assert ids == sorted(ids)
+    
+    def test_restore_snapshot_basic(self, project_folder):
+        """Test restoring a basic snapshot."""
+        # Create initial state and snapshot
+        project_folder.create_file("file1.py", "original content")
+        project_folder.create_file("file2.txt", "original data")
+        snapshot_id = project_folder.create_snapshot(label="Original state")
+        
+        # Modify files
+        project_folder.create_file("file1.py", "modified content", overwrite=True)
+        project_folder.create_file("file2.txt", "modified data", overwrite=True)
+        project_folder.create_file("file3.py", "new file")
+        
+        # Restore snapshot
+        result = project_folder.restore_snapshot(snapshot_id)
+        assert result is True
+        
+        # Verify files are restored
+        file1 = project_folder.load_file("file1.py")
+        assert file1['content'] == ["original content"]
+        
+        file2 = project_folder.load_file("file2.txt")
+        assert file2['content'] == ["original data"]
+        
+        # Verify new file is removed
+        files = project_folder.list_files()
+        file_paths = [f['path'] for f in files]
+        assert "file3.py" not in file_paths
+    
+    def test_restore_snapshot_with_subdirectories(self, project_folder):
+        """Test restoring a snapshot with nested directories."""
+        # Create nested structure and snapshot
+        project_folder.create_file("main.py", "main")
+        project_folder.create_file("subdir/module.py", "module")
+        project_folder.create_file("subdir/nested/deep.py", "deep")
+        snapshot_id = project_folder.create_snapshot(label="Nested structure")
+        
+        # Remove all files
+        project_folder.remove_file("main.py")
+        project_folder.remove_file("subdir/module.py")
+        project_folder.remove_file("subdir/nested/deep.py")
+        
+        # Restore
+        result = project_folder.restore_snapshot(snapshot_id)
+        assert result is True
+        
+        # Verify all files are restored
+        main = project_folder.load_file("main.py")
+        assert main['content'] == ["main"]
+        
+        module = project_folder.load_file("subdir/module.py")
+        assert module['content'] == ["module"]
+        
+        deep = project_folder.load_file("subdir/nested/deep.py")
+        assert deep['content'] == ["deep"]
+    
+    def test_restore_snapshot_restores_checklists(self, project_folder):
+        """Test that restoring a snapshot restores checklists."""
+        # Create checklist and snapshot
+        checklist_path = project_folder.checklists_path / "tasks.txt"
+        checklist_path.write_text("Original task 1\nOriginal task 2")
+        snapshot_id = project_folder.create_snapshot(label="With checklist")
+        
+        # Modify checklist
+        checklist_path.write_text("Modified task")
+        
+        # Restore
+        result = project_folder.restore_snapshot(snapshot_id)
+        assert result is True
+        
+        # Verify checklist is restored
+        content = checklist_path.read_text()
+        assert content == "Original task 1\nOriginal task 2"
+    
+    def test_restore_snapshot_removes_added_files(self, temp_project):
+        """Test that restoring removes files added after snapshot."""
+        # Create a fresh ProjectFolder
+        pf = ProjectFolder(temp_project)
+        
+        # Remove all existing files first
+        for file in pf.list_files():
+            pf.remove_file(file['path'])
+        
+        # Create snapshot with one file
+        pf.create_file("original.py", "original")
+        snapshot_id = pf.create_snapshot(label="Original")
+        
+        # Add more files
+        pf.create_file("added1.py", "added1")
+        pf.create_file("added2.py", "added2")
+        pf.create_file("subdir/added3.py", "added3")
+        
+        # Restore
+        result = pf.restore_snapshot(snapshot_id)
+        assert result is True
+        
+        # Verify only original file exists
+        files = pf.list_files()
+        assert len(files) == 1
+        assert files[0]['path'] == "original.py"
+    
+    def test_restore_snapshot_preserves_excluded_files(self, project_folder):
+        """Test that restoring preserves excluded files (like .venv)."""
+        # Create regular file and snapshot
+        project_folder.create_file("main.py", "main")
+        snapshot_id = project_folder.create_snapshot(label="Main only")
+        
+        # Add excluded file
+        venv_path = project_folder.code_path / ".venv" / "lib" / "file.py"
+        venv_path.parent.mkdir(parents=True, exist_ok=True)
+        venv_path.write_text("venv file")
+        
+        # Restore
+        result = project_folder.restore_snapshot(snapshot_id)
+        assert result is True
+        
+        # Verify excluded file still exists
+        assert venv_path.exists()
+        assert venv_path.read_text() == "venv file"
+        
+        # Verify main file is still there
+        main = project_folder.load_file("main.py")
+        assert main['content'] == ["main"]
+    
+    def test_restore_snapshot_nonexistent(self, project_folder):
+        """Test restoring a nonexistent snapshot returns False."""
+        result = project_folder.restore_snapshot("999")
+        assert result is False
+    
+    def test_restore_snapshot_invalid_id(self, project_folder):
+        """Test restoring with invalid snapshot ID returns False."""
+        result = project_folder.restore_snapshot("invalid_id")
+        assert result is False
+    
+    def test_snapshot_workflow(self, project_folder):
+        """Test a complete workflow: create, modify, snapshot, modify, restore."""
+        # Version 1
+        project_folder.create_file("app.py", "version 1")
+        project_folder.create_file("config.json", '{"version": 1}')
+        snapshot_v1 = project_folder.create_snapshot(label="Version 1")
+        
+        # Version 2
+        project_folder.create_file("app.py", "version 2", overwrite=True)
+        project_folder.create_file("config.json", '{"version": 2}', overwrite=True)
+        project_folder.create_file("new_feature.py", "feature")
+        snapshot_v2 = project_folder.create_snapshot(label="Version 2")
+        
+        # Version 3
+        project_folder.create_file("app.py", "version 3", overwrite=True)
+        project_folder.remove_file("new_feature.py")
+        snapshot_v3 = project_folder.create_snapshot(label="Version 3")
+        
+        # List snapshots
+        snapshots = project_folder.list_snapshots()
+        assert len(snapshots) == 3
+        
+        # Restore to Version 2
+        result = project_folder.restore_snapshot(snapshot_v2)
+        assert result is True
+        
+        app = project_folder.load_file("app.py")
+        assert app['content'] == ["version 2"]
+        
+        config = project_folder.load_file("config.json")
+        assert config['content'] == ['{"version": 2}']
+        
+        feature = project_folder.load_file("new_feature.py")
+        assert feature['content'] == ["feature"]
+        
+        # Restore to Version 1
+        result = project_folder.restore_snapshot(snapshot_v1)
+        assert result is True
+        
+        app = project_folder.load_file("app.py")
+        assert app['content'] == ["version 1"]
+        
+        files = project_folder.list_files()
+        file_paths = [f['path'] for f in files]
+        assert "new_feature.py" not in file_paths
 
 
 if __name__ == "__main__":

@@ -24,6 +24,8 @@ import re
 import logging
 import json
 import subprocess
+import datetime
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple, Any
 from fastmcp.exceptions import ToolError
@@ -49,11 +51,21 @@ class ProjectFolder:
         project_path: Absolute path to the project folder
         exclude_patterns: List of patterns to exclude from file operations
         _metadata_cache: Cache for file metadata with modification times
+
+    Project folder structure:
+        /base_path/
+            /current/  - current working directory
+                /code/ - current code folder
+                /checklists/ - checklists folder
+            /history/ - history of previous code versions
+                /1/
+                /2/
+                ...
     """
     
-    DEFAULT_EXCLUDE_PATTERNS = ['.venv/**/*', '__pycache__/**', '**/*.pyc']
+    DEFAULT_EXCLUDE_PATTERNS = ['.venv', '__pycache__', '**/*.pyc', '.ruff_cache']
 
-    def __init__(self, project_path: str, exclude_patterns: Optional[List[str]] = None):
+    def __init__(self, base_path: str, exclude_patterns: Optional[List[str]] = None):
         """
         Initialize ProjectFolder with a project directory.
         
@@ -66,18 +78,27 @@ class ProjectFolder:
         Raises:
             ProjectFolderError: If the project path doesn't exist or isn't a directory
         """
-        self.project_path = Path(project_path).resolve()
+        self.base_path = Path(base_path).resolve()
         
-        if not self.project_path.exists():
-            raise ProjectFolderError(f"Project path does not exist: {project_path}")
+        if not self.base_path.exists():
+            raise ProjectFolderError(f"Project base path does not exist: {base_path}")
         
-        if not self.project_path.is_dir():
-            raise ProjectFolderError(f"Project path is not a directory: {project_path}")
+        if not self.base_path.is_dir():
+            raise ProjectFolderError(f"Project base path is not a directory: {base_path}")
+
+        # Set standard subdirectories
+        self.code_path = self.base_path / "current" / "code"
+        self.checklists_path = self.base_path / "current" / "checklists"
+        self.history_path = self.base_path / "history"
+        # Create standard subdirectories
+        self.code_path.mkdir(parents=True, exist_ok=True)
+        self.checklists_path.mkdir(parents=True, exist_ok=True)
+        self.history_path.mkdir(parents=True, exist_ok=True)
         
         self.exclude_patterns = exclude_patterns if exclude_patterns is not None else self.DEFAULT_EXCLUDE_PATTERNS
         self._metadata_cache = {}
     
-    def _validate_path(self, file_path: Union[str, Path]) -> Path:
+    def _validate_code_path(self, file_path: Union[str, Path]) -> Path:
         """
         Validate that a file path is within the project folder.
         
@@ -101,11 +122,11 @@ class ProjectFolder:
             )
         
         # Make it relative to project folder and resolve
-        full_path = (self.project_path / file_path).resolve()
+        full_path = (self.code_path / file_path).resolve()
         
         # Check if the path is within project folder
         try:
-            full_path.relative_to(self.project_path)
+            full_path.relative_to(self.code_path)
         except ValueError:
             raise ProjectFolderError(
                 f"Path '{file_path}' is outside the project folder"
@@ -124,14 +145,25 @@ class ProjectFolder:
             True if the path should be excluded, False otherwise
         """
         try:
-            rel_path = file_path.relative_to(self.project_path)
+            rel_path = file_path.relative_to(self.code_path)
+            rel_path_str = str(rel_path)
             
             for pattern in self.exclude_patterns:
-                # Use glob-style matching
+                # Use glob-style matching for the path itself
                 if rel_path.match(pattern):
                     return True
+                
+                # For directory patterns (without wildcards), check if path is inside that directory
+                # This handles patterns like '.venv' or '__pycache__' to exclude everything inside them
+                if '**' not in pattern and '*' not in pattern:
+                    # Check if this path is the excluded directory itself
+                    if rel_path_str == pattern:
+                        return True
+                    # Check if this path is inside the excluded directory
+                    if rel_path_str.startswith(pattern + '/'):
+                        return True
         except ValueError:
-            # Path is not relative to project_path
+            # Path is not relative to base_path
             pass
         
         return False
@@ -212,7 +244,7 @@ class ProjectFolder:
 
         try:
             stat_info = os.stat(file_path)
-            rel_path = str(file_path.relative_to(self.project_path))
+            rel_path = str(file_path.relative_to(self.code_path))
             mtime = stat_info.st_mtime
 
             if rel_path in self._metadata_cache:
@@ -233,7 +265,7 @@ class ProjectFolder:
             return metadata
         except Exception as e:
             return {
-                'path': str(file_path.relative_to(self.project_path)),
+                'path': str(file_path.relative_to(self.code_path)),
                 'error': str(e)
             }
     
@@ -245,7 +277,7 @@ class ProjectFolder:
             file_path: Absolute path to the file
         """
         try:
-            rel_path = str(file_path.relative_to(self.project_path))
+            rel_path = str(file_path.relative_to(self.code_path))
             if rel_path in self._metadata_cache:
                 del self._metadata_cache[rel_path]
         except Exception: # File not in project folder or other error
@@ -268,7 +300,7 @@ class ProjectFolder:
             files = []
             
             # Use rglob for recursive search
-            for file_path in self.project_path.rglob(pattern):
+            for file_path in self.code_path.rglob(pattern):
                 if file_path.is_file() and not self._is_excluded(file_path):
                     files.append(self.get_metadata(file_path))
             
@@ -285,7 +317,7 @@ class ProjectFolder:
         Load and return the complete contents of a file.
         
         Args:
-            file_path: Relative path to the file (relative to project folder)
+            file_path: Relative path to the file (relative to project base folder)
             
         Returns:
             Dictionary with:
@@ -296,7 +328,7 @@ class ProjectFolder:
             ProjectFolderError: If file not found, not a text file, or operation fails
         """
         try:
-            full_path = self._validate_path(file_path)
+            full_path = self._validate_code_path(file_path)
             
             if not full_path.exists():
                 raise ProjectFolderError(f"File not found: {file_path}")
@@ -339,7 +371,7 @@ class ProjectFolder:
                 - error: Error details (only present on error)
         """
         try:
-            full_path = self._validate_path(file_path)
+            full_path = self._validate_code_path(file_path)
             
             # Track old content if file exists
             old_line_count = None
@@ -432,7 +464,7 @@ class ProjectFolder:
             ProjectFolderError: If file not found, path is not a file, or operation fails
         """
         try:
-            full_path = self._validate_path(file_path)
+            full_path = self._validate_code_path(file_path)
             
             if not full_path.exists():
                 raise ProjectFolderError(f"File not found: {file_path}")
@@ -441,7 +473,7 @@ class ProjectFolder:
                 raise ProjectFolderError(f"Path is not a file: {file_path}")
             
             # Get relative path before deletion
-            rel_path = str(full_path.relative_to(self.project_path))
+            rel_path = str(full_path.relative_to(self.code_path))
             
             # Remove from cache
             self._clear_metadata_cache(full_path)
@@ -478,7 +510,7 @@ class ProjectFolder:
             ProjectFolderError: If file not found, invalid line numbers, or operation fails
         """
         try:
-            full_path = self._validate_path(file_path)
+            full_path = self._validate_code_path(file_path)
             
             if not full_path.exists():
                 raise ProjectFolderError(f"File not found: {file_path}")
@@ -507,7 +539,7 @@ class ProjectFolder:
             # Extract lines (convert to 0-indexed)
             lines = [line.rstrip('\n\r') for line in all_lines[start_line - 1:actual_end]]
             
-            rel_path = str(full_path.relative_to(self.project_path))
+            rel_path = str(full_path.relative_to(self.code_path))
             
             return {
                 'lines': lines,
@@ -561,7 +593,7 @@ class ProjectFolder:
                     raise ProjectFolderError(f"Invalid regex pattern: {str(e)}")
             
             # Search through files
-            for file_path in self.project_path.rglob(file_pattern):
+            for file_path in self.code_path.rglob(file_pattern):
                 if not file_path.is_file() or self._is_excluded(file_path):
                     continue
                 
@@ -581,7 +613,7 @@ class ProjectFolder:
                                     found = pattern.lower() in line_content.lower()
                             
                             if found:
-                                rel_path = str(file_path.relative_to(self.project_path))
+                                rel_path = str(file_path.relative_to(self.code_path))
                                 matches.append({
                                     'file': rel_path,
                                     'line_number': line_num,
@@ -635,7 +667,7 @@ class ProjectFolder:
                     raise ProjectFolderError(f"Invalid regex pattern: {str(e)}")
             
             # Process each matching file
-            for file_path in self.project_path.rglob(file_pattern):
+            for file_path in self.code_path.rglob(file_pattern):
                 if not file_path.is_file() or self._is_excluded(file_path):
                     continue
                 
@@ -656,7 +688,7 @@ class ProjectFolder:
                         self._clear_metadata_cache(file_path)
                         
                         # Add to results
-                        rel_path = str(file_path.relative_to(self.project_path))
+                        rel_path = str(file_path.relative_to(self.code_path))
                         results[rel_path] = num_replacements
                         
                         logger.info(f"replace_in_files({rel_path}): {num_replacements} replacement(s)")
@@ -698,7 +730,7 @@ class ProjectFolder:
             ProjectFolderError: If file not found or operation fails
         """
         try:
-            full_path = self._validate_path(file_path)
+            full_path = self._validate_code_path(file_path)
             
             if not full_path.exists():
                 raise ProjectFolderError(f"File not found: {file_path}")
@@ -728,7 +760,7 @@ class ProjectFolder:
                 # Clear cache for this file
                 self._clear_metadata_cache(full_path)
                 
-                rel_path = str(full_path.relative_to(self.project_path))
+                rel_path = str(full_path.relative_to(self.code_path))
                 logger.info(f"multiline_replace_in_file({rel_path}): {num_replacements} replacement(s)")
             
             return num_replacements
@@ -769,7 +801,7 @@ class ProjectFolder:
             ProjectFolderError: If file not found or operation fails
         """
         try:
-            full_path = self._validate_path(file_path)
+            full_path = self._validate_code_path(file_path)
             
             if not full_path.exists():
                 raise ProjectFolderError(f"File not found: {file_path}")
@@ -799,7 +831,7 @@ class ProjectFolder:
                 # Clear cache for this file
                 self._clear_metadata_cache(full_path)
                 
-                rel_path = str(full_path.relative_to(self.project_path))
+                rel_path = str(full_path.relative_to(self.code_path))
                 matched_line_1based = matched_line_0based + 1
                 logger.info(f"fuzzy_replace_in_file({rel_path}): replacement at line {matched_line_1based}")
                 
@@ -851,7 +883,7 @@ class ProjectFolder:
         try:
             # Build list of files to check
             files_to_check = []
-            for file_path in self.project_path.rglob(file_pattern):
+            for file_path in self.code_path.rglob(file_pattern):
                 if file_path.is_file() and not self._is_excluded(file_path):
                     files_to_check.append(str(file_path))
             
@@ -873,7 +905,7 @@ class ProjectFolder:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=str(self.project_path)
+                cwd=str(self.code_path)
             )
             
             # Ruff exits with non-zero if issues found, which is expected
@@ -906,7 +938,7 @@ class ProjectFolder:
             for issue in ruff_output:
                 file_path = Path(issue['filename'])
                 try:
-                    rel_path = str(file_path.relative_to(self.project_path))
+                    rel_path = str(file_path.relative_to(self.code_path))
                 except ValueError:
                     rel_path = str(file_path)
                 
@@ -1007,7 +1039,7 @@ class ProjectFolder:
             regex = re.compile(pattern)
             
             # Search through Python files
-            for file_path in self.project_path.rglob("*.py"):
+            for file_path in self.code_path.rglob("*.py"):
                 if not file_path.is_file() or self._is_excluded(file_path):
                     continue
                 
@@ -1029,7 +1061,7 @@ class ProjectFolder:
                             def_lines = lines[i:end_idx + 1]
                             def_text = ''.join(def_lines)
                             
-                            rel_path = str(file_path.relative_to(self.project_path))
+                            rel_path = str(file_path.relative_to(self.code_path))
                             
                             definitions.append({
                                 'name': name,
@@ -1048,3 +1080,148 @@ class ProjectFolder:
         except Exception as e:
             raise ProjectFolderError(f"Find definition failed: {str(e)}")
 
+    def _next_snapshot_id(self) -> int:
+        """ Determine the next snapshot ID based on existing snapshots. """
+        existing_ids = []
+        if self.history_path.exists():
+            for entry in self.history_path.iterdir():
+                if entry.is_dir() and entry.name.isdigit():
+                    existing_ids.append(int(entry.name))
+        return max(existing_ids, default=0) + 1
+
+    def create_snapshot(self, label=None) -> str:
+        """ 
+            Create a snapshot of the current project folder state.
+            A folder in history/ is created with the name equals snapshot ID.
+            Snapshot ID is a snapshot number (1,2,3 etc) and it returned
+            current/code contents is copied into history/<ID>/code, excluding DEFAULT_EXCLUDE_PATTERN
+            current/checklists contents is copied into history/<ID>/checklists
+            history/<ID>/metadata.json is created with:
+                - timestamp: ISO formatted timestamp of snapshot creation
+                - label: Snapshot label
+            If snapshot label is not provided, a default label with timestamp is used.
+        """
+        snapshot_id = str(self._next_snapshot_id())
+        snapshot_path = self.history_path / snapshot_id
+        code_snapshot_path = snapshot_path / "code"
+        checklists_snapshot_path = snapshot_path / "checklists"
+        metadata_path = snapshot_path / "metadata.json"
+
+        # Create snapshot directories
+        code_snapshot_path.mkdir(parents=True, exist_ok=True)
+        checklists_snapshot_path.mkdir(parents=True, exist_ok=True)
+
+        # Copy code folder excluding DEFAULT_EXCLUDE_PATTERN
+        if self.code_path.exists():
+            for item in self.code_path.rglob('*'):
+                if self._is_excluded(item):
+                    continue
+                relative_item_path = item.relative_to(self.code_path)
+                dest_item_path = code_snapshot_path / relative_item_path
+                if item.is_dir():
+                    dest_item_path.mkdir(parents=True, exist_ok=True)
+                else:
+                    dest_item_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(item, dest_item_path)
+
+        # Copy checklists folder
+        if self.checklists_path.exists():
+            shutil.copytree(self.checklists_path, checklists_snapshot_path, dirs_exist_ok=True)
+
+        # Create metadata.json
+        timestamp = datetime.datetime.utcnow().isoformat() + 'Z'
+        if label is None:
+            label = f"Snapshot at {timestamp}"
+        metadata = {
+            'id': snapshot_id,
+            'timestamp': timestamp,
+            'label': label
+        }
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=4)
+
+        logger.info(f"Created snapshot {snapshot_id} with label: {label}")
+        return snapshot_id
+    
+    def list_snapshots(self) -> List[Dict[str, Any]]:
+        """ 
+            List all snapshots with their metadata.
+            Returns a list of dictionaries with:
+                - id: Snapshot ID
+                - timestamp: Snapshot creation timestamp
+                - label: Snapshot label
+        """
+        snapshots = []
+        if self.history_path.exists():
+            for entry in sorted(self.history_path.iterdir(), key=lambda e: int(e.name) if e.name.isdigit() else float('inf')):
+                if entry.is_dir() and entry.name.isdigit():
+                    metadata_path = entry / "metadata.json"
+                    if metadata_path.exists():
+                        try:
+                            with open(metadata_path, 'r', encoding='utf-8') as f:
+                                metadata = json.load(f)
+                                snapshots.append(metadata)
+                        except (json.JSONDecodeError, OSError):
+                            continue
+        return snapshots
+    
+    def restore_snapshot(self, snapshot_id: str) -> bool:
+        """ 
+            Restore the project folder to the state of the specified snapshot ID.
+            The current code/ folder content is deleted, except DEFAULT_EXCLUDE_PATTERN, and files from the snapshot are written over.
+            The current checklists/ folder content is deleted, and files from the snapshot are written over.
+            Returns True if successful, False if snapshot not found or error occurs.
+        """
+        snapshot_path = self.history_path / snapshot_id
+        code_snapshot_path = snapshot_path / "code"
+        checklists_snapshot_path = snapshot_path / "checklists"
+
+        if not snapshot_path.exists() or not snapshot_path.is_dir():
+            logger.error(f"Snapshot {snapshot_id} not found")
+            return False
+
+        try:
+            # Clear current code folder except excluded patterns
+            if self.code_path.exists():
+                # First pass: collect items to delete (excluding items in excluded directories)
+                items_to_delete = []
+                for item in sorted(self.code_path.rglob('*'), reverse=True):  # reverse to handle deepest first
+                    if self._is_excluded(item):
+                        continue
+                    items_to_delete.append(item)
+                
+                # Second pass: delete files and empty directories
+                for item in items_to_delete:
+                    try:
+                        if item.exists() and item.is_file():
+                            item.unlink()
+                        elif item.exists() and item.is_dir() and not any(item.iterdir()):
+                            item.rmdir()
+                    except (OSError, PermissionError):
+                        pass
+
+            # Copy code snapshot
+            if code_snapshot_path.exists():
+                for item in code_snapshot_path.rglob('*'):
+                    relative_item_path = item.relative_to(code_snapshot_path)
+                    dest_item_path = self.code_path / relative_item_path
+                    if item.is_dir():
+                        dest_item_path.mkdir(parents=True, exist_ok=True)
+                    else:
+                        dest_item_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, dest_item_path)
+
+            # Clear current checklists folder
+            if self.checklists_path.exists():
+                shutil.rmtree(self.checklists_path, ignore_errors=True)
+
+            # Copy checklists snapshot
+            if checklists_snapshot_path.exists():
+                shutil.copytree(checklists_snapshot_path, self.checklists_path, dirs_exist_ok=True)
+
+            logger.info(f"Restored snapshot {snapshot_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to restore snapshot {snapshot_id}: {str(e)}")
+            return False
