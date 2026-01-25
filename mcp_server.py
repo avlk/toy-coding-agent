@@ -348,6 +348,131 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         logger.info(f"run_ruff_check(file_pattern={file_pattern!r}, fix={fix!r}) called")
         return pf.run_ruff_check(file_pattern=file_pattern, fix=fix)
     
+    # Expose create_snapshot as MCP tool
+    @mcp.tool()
+    def create_snapshot(label: Optional[str] = None) -> dict:
+        """
+        Create a snapshot of the current project state.
+        
+        A snapshot captures the current state of all code files and checklists,
+        storing them with a unique ID for later restoration. Excluded files 
+        (like .venv, __pycache__) are not included in snapshots.
+        
+        Args:
+            label: Optional descriptive label for the snapshot (default: auto-generated with timestamp)
+                   Example: "Before refactoring", "Working version 1.0"
+        
+        Returns:
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded (always True unless error)
+            - snapshot_id: Unique ID of the created snapshot (sequential number: "1", "2", etc.)
+            - error: Error message (only present if success=False)
+        
+        Use cases:
+        - Save state before major refactoring
+        - Create checkpoints during development
+        - Preserve working versions before experiments
+        """
+        logger.info(f"create_snapshot(label={label!r}) called")
+        try:
+            snapshot_id = pf.create_snapshot(label=label)
+            return {
+                'success': True,
+                'snapshot_id': snapshot_id
+            }
+        except Exception as e:
+            logger.error(f"create_snapshot failed: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    # Expose list_snapshots as MCP tool
+    @mcp.tool()
+    def list_snapshots() -> dict:
+        """
+        List all available snapshots with their metadata.
+        
+        Returns a list of all snapshots in chronological order (oldest to newest),
+        including their IDs, timestamps, and labels.
+        
+        Returns:
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded (always True unless error)
+            - snapshots: List of snapshot dictionaries, each containing:
+                - id: Snapshot ID (string)
+                - timestamp: ISO formatted creation timestamp
+                - label: Descriptive label
+            - count: Total number of snapshots
+            - error: Error message (only present if success=False)
+        
+        Use cases:
+        - View available restore points
+        - Check snapshot history
+        - Find specific snapshot by label
+        """
+        logger.info("list_snapshots() called")
+        try:
+            snapshots = pf.list_snapshots()
+            return {
+                'success': True,
+                'snapshots': snapshots,
+                'count': len(snapshots)
+            }
+        except Exception as e:
+            logger.error(f"list_snapshots failed: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    # Expose restore_snapshot as MCP tool
+    @mcp.tool()
+    def restore_snapshot(snapshot_id: str) -> dict:
+        """
+        Restore the project to a previous snapshot state.
+        
+        This operation restores all code files and checklists to the state
+        captured in the specified snapshot. 
+        
+        Args:
+            snapshot_id: ID of the snapshot to restore (obtained from list_snapshots)
+                        Example: "1", "2", "3"
+        
+        Returns:
+            Dictionary with:
+            - success: Boolean indicating if operation succeeded
+            - snapshot_id: ID of the restored snapshot
+            - error: Error message (only present if success=False)
+        
+        Use cases:
+        - Revert to a previous working state
+        - Undo failed experiments
+        - Switch between different code versions
+        
+        Note: Create a snapshot of current state before restoring if you want to preserve it.
+        """
+        logger.info(f"restore_snapshot(snapshot_id={snapshot_id!r}) called")
+        try:
+            result = pf.restore_snapshot(snapshot_id)
+            
+            if result:
+                return {
+                    'success': True,
+                    'snapshot_id': snapshot_id
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f"Snapshot {snapshot_id} not found"
+                }
+        except Exception as e:
+            logger.error(f"restore_snapshot failed: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     # Expose patch_project as MCP tool
     @mcp.tool()
     def apply_patch(patch_content: str) -> dict:
@@ -379,7 +504,9 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         Returns:
             Dictionary with:
             - success: True if all hunks applied successfully
-            - message: Summary of the operation
+            - error: Error message (only present if success=False)
+            - failed_files: List of files that failed to apply with number of failed hunks (only present if success=False)
+            - hint: Message for troubleshooting (only present if success=False)
             - project_path: Path to the project
             
         Note: This is different from create_file. Use apply_patch for modifications via diff format.
@@ -414,7 +541,6 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             logger.info("Patch applied successfully")
             return {
                 "success": True,
-                "message": "Patch applied successfully",
                 "project_path": str(project_dir)
             }
             
