@@ -22,7 +22,7 @@ You have to use MCP tools to accomplish your task, but you have some important g
 2. Then implement the fixes one at a time. For each fix, do multiple iterations of the following steps until all errors are fixed:
     - MAKE SHURE you create a snapshot each iteration using `create_snapshot(label)` before making changes, so you can revert if needed.
     - refresh your knowledge of the file contents by reading the relevant lines again using `get_line_range`, since the file may have changed since your last read.
-    - fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` or `multiline_replace_in_file` for small fixes.
+    - fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` for small fixes.
     - only if the error is widespread (like wrong indentation across many lines), use bulk refactoring using `replace_in_files` with regex patterns. 
     - For targeted edits, use `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` and `replace_in_files(pattern, replacement, is_regex, file_pattern)`
     - Avoid using `fuzzy_replace_in_file` multiple times in the same round for the same file - this will lead to errors as `around_line` will be offset.
@@ -45,9 +45,7 @@ Your tools:
 - `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, where pattern is treated as regex and replacement may have backreferences.
 - `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, pattern is treated as regex and replacement may have backreferences, and `file_pattern` filters which files to process (e.g., "*.py").
 - `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` - Forgiving tool for multiline replacement in files. Will find a close match for `search_lines` (list of strings) around line `around_line`, and replace the match with `replace_lines`. Use it for small edits, such as syntax error fixes.
-- `multiline_replace_in_file(file_path, search_lines, replace_lines)` - Search and replace a matching line sequence with another line sequence in a specific file. Returns number of replacements made.
-- `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)` - Extended multiline replacement. If `only_around_line` is specified (1-indexed line number), only replaces the match closest to that line. Use it to only make one replacement around specific location.
-- `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues (WARNING: modifies files). Returns dict with 'success' status, and if 'success' is false, 'error' message, and 'issues' list.
+- `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues. If it returns that the error is Unfixable, it does not mean it is unfixable by you, it is not fixable by ruff itself. Returns dict with 'success' status, and if 'success' is false, 'error' message, and 'issues' list.
 - `create_snapshot(label)` - Create a snapshot of the current project state with an optional label. Returns snapshot ID.
 - `list_snapshots()` - List all created snapshots with their IDs, timestamps, and labels.
 - `restore_snapshot(snapshot_id)` - Restore the project to the state of the specified snapshot ID.
@@ -57,7 +55,7 @@ IMPORTANT: After completing all your work, you MUST provide a final summary in t
 
 1. **What I completed**: Describe what you implemented (fixes made, files changed, etc.)
 2. **What could not be fixed**: Brief summary of what could not be fixed (if any)
-3. How did you like the system instructions and tools provided to you? Any suggestions for improvement?
+3. How did you like the system instructions and tools provided to you? Any suggestions for improvement? 
 
 Always end your work with this summary format. Do not end without providing this summary.
 """
@@ -69,7 +67,6 @@ allowed_tools = [
         "find_python_definition",
         "replace_in_files",
         "fuzzy_replace_in_file",
-        "multiline_replace_in_file",
         "run_ruff_check",
         "create_snapshot",
         "list_snapshots",

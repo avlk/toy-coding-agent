@@ -555,6 +555,14 @@ def multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str],
     return len(matches)
 
 
+def spaceless_distance(a: str, b: str) -> int:
+    """Calculate Levenshtein distance ignoring leading/trailing spaces and space number differences."""
+    a_nospace = a.strip()
+    b_nospace = b.strip()
+    a_nospace = re.sub(r'\s+', ' ', a_nospace)
+    b_nospace = re.sub(r'\s+', ' ', b_nospace)
+    return Levenshtein.distance(a_nospace, b_nospace)
+
 def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str], start_range: range) -> int | None:
     """
     Find a close match for sequence of strings around specified position and replace them.
@@ -575,10 +583,8 @@ def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list
         logger.warning("Empty search string provided")
         return None
     
-    # starting line tolerance
-    TOLERANCE = 5
-    # Maximum summary Levenshtein distance error
-    MAX_DISTANCE = 5
+    # Maximum summary Levenshtein distance error: 5 errors + 1 error per line in s_str
+    MAX_DISTANCE = 5 + len(s_str)
 
     # Starting line boundaries
     search_len = len(s_str)
@@ -591,7 +597,7 @@ def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list
     # Find all non-overlapping matches
     for i in start_range:
         # Check if sequence matches at position i
-        distance = sum(Levenshtein.distance(code_lines[i + j], s_str[j]) for j in range(search_len))
+        distance = sum(spaceless_distance(code_lines[i + j], s_str[j]) for j in range(search_len))
         
         if distance <= MAX_DISTANCE:
             logger.debug(f"Found match at line {i} with distance {distance}")

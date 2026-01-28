@@ -819,7 +819,8 @@ class ProjectFolder:
             
             # Convert 1-indexed to 0-indexed for around_line
             around_line -= 1
-            start_range = range(max(0, around_line - 5), min(len(code_lines), around_line + 6))
+            line_tolerance = 10
+            start_range = range(max(0, around_line - line_tolerance), min(len(code_lines), around_line + line_tolerance + 1))
 
             # Perform fuzzy replacement
             matched_line = fuzzy_multiline_replace(code_lines, search_lines, replace_lines, start_range=start_range)
