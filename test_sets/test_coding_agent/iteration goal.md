@@ -1,0 +1,3 @@
+- _parse_function_decl in Parser is likely wrong, check it out and fix the implementation
+- _execute_statement in Executor lacks implementation, you have to properly implement it
+- there are no tests for "for" loops, you have to implement enough tests to cover "for" loop main use case and corner cases
