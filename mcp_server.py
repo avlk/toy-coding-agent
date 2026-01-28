@@ -748,7 +748,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         logger.info(f"execute_project(cmd_args={cmd_args!r}, timeout={timeout}) called")
         try:
             result = execute_sandboxed(
-                project=str(pf.project_path),
+                project=str(project_path + "/current/code"),
                 cmd_args=cmd_args,
                 timeout=timeout,
                 method=sandbox_method
