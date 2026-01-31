@@ -1,5 +1,6 @@
 import time
 import asyncio
+import re
 from google.genai import errors, types
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from google.adk.agents import LlmAgent
@@ -21,6 +22,18 @@ def format_param_value(value):
     else:
         return str(value)
 
+def get_429_retry_delay(error) -> int:
+    """Calculate delay for 429 errors."""
+    delay = 15  # default delay
+    for d in error.details["error"].get('details', []): 
+        if '@type' in d and d['@type'] == 'type.googleapis.com/google.rpc.RetryInfo':
+            retry_delay = d.get('retryDelay', '15s')
+            delay_match = re.match(r'(\d+)(\.\d+)?s', retry_delay)
+            if delay_match:
+                delay = int(float(delay_match.group(1) + (delay_match.group(2) or '')))
+    # add random jitter of up to 5 seconds
+    jitter = random.randint(1, 5)
+    return delay + jitter
 
 class SubAgentGoogle:
     """Sub-Agent using Google ADK LlmAgent for MCP tool integration."""
@@ -105,7 +118,7 @@ class SubAgentGoogle:
         
         if parts:
             for title, content in parts:
-                message += f"\n\n# {title}\n{content}"
+                message += f"\n\n## {title}\n{content}"
         
         start_time = time.monotonic()
         
@@ -214,6 +227,14 @@ class SubAgentGoogle:
                 else:
                     print(f"❌ Server error after {max_retries} retries: {e}")
                     raise
+            except errors.ClientError as e:
+                if e.code == 429:
+                    delay = get_429_retry_delay(e)
+                else:
+                    delay = 5  # default delay for other client errors
+                print(f"⚠️  Client error: {e.code} - {e.message}")
+                print(f"🔄 Retrying in {delay}s...")
+                await asyncio.sleep(delay)  # Use async sleep
             except Exception as e:
                 # For other exceptions, don't retry
                 print(f"❌ Non-retryable error: {e}")
