@@ -158,6 +158,10 @@ errors, check out program output, and draw conclusions on the program execution 
     `create_file(file_path, content)`. You can also use `create_file(file_path,
     content, overwrite=True)` to replace entire existing files, but avoid this
     for small fixes if other tools work fine for you.
+- When calling tools to operate on multiple lines (like `fuzzy_replace_in_file`, 
+  `multiline_replace_in_file`), search and replace parameters must be lists of 
+  strings, where each string is one line. Do not pack multiple lines into one 
+  string with line endings - it will not work.
 
 **Overwriting existing files**:
 - Use `create_file(file_path, content, overwrite=True)` to replace entire files 
@@ -182,7 +186,13 @@ to finish for any reason, you MUST provide a final summary in this format:
 Always end your work with this summary format. Do not end without providing this summary.
 """
 
-model="gemini-2.5-flash"
+# model="gemini-2.5-flash"
+# model_rpm = 850
+# model_tpm = 850_000
+
+model="gemini-3-flash-preview"
+model_rpm = 850
+model_tpm = 850_000
 
 def create_subagent_coding(mcp: MCPInstance, token_tracker: TokenUsageTracker, instruction, **kwargs) -> SubAgentGoogle:
 
@@ -232,7 +242,7 @@ async def test_streaming_agent():
     nrounds = 5
     success_rounds = []
 
-    request_throttler = get_throttler(850, 500_000, model=model)  # 850 RPM, 500k TPM limit
+    request_throttler = get_throttler(model_rpm, model_tpm, model=model) 
     use_case = load_file(f"test_sets/{test_name}/use case.md")
     goals = load_file(f"test_sets/{test_name}/goals.md")
     feedback = load_file(f"test_sets/{test_name}/iteration goal.md")
