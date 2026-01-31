@@ -17,6 +17,8 @@ from google.genai.local_tokenizer import LocalTokenizer
 class ElegantThrottler:
     def __init__(self, rpm: int, tpm: int, model: str):
         # Local tokenizer (no network calls)
+        if model.startswith("gemini-3"):
+            model="gemini-2.5-flash" # Use 2.5 tokenizer for 3.x models for now
         self.tokenizer = LocalTokenizer(model_name=model)
         self.tpm = tpm
         self.debug = False
