@@ -232,7 +232,7 @@ async def test_streaming_agent():
     nrounds = 5
     success_rounds = []
 
-    request_throttler = get_throttler(250)  # 250 RPM limit
+    request_throttler = get_throttler(850, 500_000, model=model)  # 850 RPM, 500k TPM limit
     use_case = load_file(f"test_sets/{test_name}/use case.md")
     goals = load_file(f"test_sets/{test_name}/goals.md")
     feedback = load_file(f"test_sets/{test_name}/iteration goal.md")

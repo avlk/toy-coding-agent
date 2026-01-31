@@ -53,7 +53,9 @@ class SubAgentGoogle:
         if planner:
             agent_args['planner'] = planner
         if rate_limiter:
-            agent_args['before_model_callback'] = rate_limiter
+            agent_args['before_model_callback'] = rate_limiter.before_call
+            agent_args['after_model_callback'] = rate_limiter.after_call
+            
         self.agent = LlmAgent(
             model=model,
             name=self.agent_name,
