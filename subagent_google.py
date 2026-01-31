@@ -38,7 +38,7 @@ def get_429_retry_delay(error) -> int:
 class SubAgentGoogle:
     """Sub-Agent using Google ADK LlmAgent for MCP tool integration."""
     
-    def __init__(self, name, model, token_tracker, system_instruction, mcp_toolset: McpToolset = None, planner=None):
+    def __init__(self, name, model, token_tracker, system_instruction, mcp_toolset: McpToolset = None, planner=None, rate_limiter=None):
         self.agent_name = name
         self.token_tracker = token_tracker
         self.model = model
@@ -52,7 +52,8 @@ class SubAgentGoogle:
             agent_args['tools'] =  [mcp_toolset]
         if planner:
             agent_args['planner'] = planner
-
+        if rate_limiter:
+            agent_args['before_model_callback'] = rate_limiter
         self.agent = LlmAgent(
             model=model,
             name=self.agent_name,

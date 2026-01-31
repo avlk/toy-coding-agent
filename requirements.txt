@@ -3,6 +3,7 @@ google-genai>=1.0.0
 google-adk>=1.21.0
 python-Levenshtein>=0.20.0
 fastmcp>=2.14.1
+ratelimit>=2.2.1
 
 # Development dependencies
 pytest>=9.0.0

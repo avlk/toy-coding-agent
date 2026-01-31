@@ -4,6 +4,7 @@ from google.adk.planners import PlanReActPlanner, BuiltInPlanner
 from mcp_instance import MCPInstance
 from token_tracker import TokenUsageTracker
 from utils import load_file
+from throttler import get_throttler
 
 system_instruction = """
 You are an expert Python programmer with access to MCP (Model Context Protocol) 
@@ -183,7 +184,7 @@ Always end your work with this summary format. Do not end without providing this
 
 model="gemini-2.5-flash"
 
-def create_subagent_coding(mcp: MCPInstance, token_tracker: TokenUsageTracker, instruction) -> SubAgentGoogle:
+def create_subagent_coding(mcp: MCPInstance, token_tracker: TokenUsageTracker, instruction, **kwargs) -> SubAgentGoogle:
 
     planner=BuiltInPlanner(thinking_config=types.ThinkingConfig(thinking_budget=5000))
 
@@ -194,7 +195,7 @@ def create_subagent_coding(mcp: MCPInstance, token_tracker: TokenUsageTracker, i
         token_tracker=token_tracker,
         system_instruction=instruction, 
         mcp_toolset=mcp.get_toolset(),
-        planner=planner
+        planner=planner, **kwargs
     )
     return subagent
 
@@ -231,13 +232,13 @@ async def test_streaming_agent():
     nrounds = 5
     success_rounds = []
 
-
+    request_throttler = get_throttler(250)  # 250 RPM limit
     use_case = load_file(f"test_sets/{test_name}/use case.md")
     goals = load_file(f"test_sets/{test_name}/goals.md")
     feedback = load_file(f"test_sets/{test_name}/iteration goal.md")
 
     try:
-        subagent = create_subagent_coding(mcp, token_tracker, system_instruction)
+        subagent = create_subagent_coding(mcp, token_tracker, system_instruction, rate_limiter=request_throttler)
         subagent.set_debug(True)
         subagent.set_progress_indication(False)
 
