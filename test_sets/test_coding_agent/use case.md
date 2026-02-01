@@ -1,5 +1,3 @@
-## Use case
-
 Implement a program for the following use case:
 
 Develop a C-like language interpreter comprising a parser, type checker, and code executor.

@@ -1,5 +1,3 @@
-## Goals
-
 It shall meet the following goals:
 
 - Implement a C-like language interpreter with distinct parser, type checker, and execution stages.
