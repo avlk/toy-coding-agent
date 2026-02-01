@@ -12,14 +12,11 @@
 import asyncio
 from throttled import RateLimiterType, rate_limiter
 from throttled.asyncio import Throttled
-from google.genai.local_tokenizer import LocalTokenizer
+from litellm import token_counter
 
 class ElegantThrottler:
     def __init__(self, rpm: int, tpm: int, model: str):
-        # Local tokenizer (no network calls)
-        if model.startswith("gemini-3"):
-            model="gemini-2.5-flash" # Use 2.5 tokenizer for 3.x models for now
-        self.tokenizer = LocalTokenizer(model_name=model)
+        self.model_name = model
         self.tpm = tpm
         self.debug = False
 
@@ -39,42 +36,51 @@ class ElegantThrottler:
         self.last_prediction = 0
         self.lock = asyncio.Lock()
 
-    def _predict_input_cost(self, llm_request) -> int:
-        count = 0
+    def _predict_input_cost(self, request) -> int:
+        """Deep inspection of ADK LlmRequest for accurate counting."""
+        messages = []
         
-        # 1. Robust System Instruction Counting
-        if hasattr(llm_request, 'config') and llm_request.config.system_instruction:
-            si = llm_request.config.system_instruction
+        # 1. System Instruction
+        si = getattr(request.config, 'system_instruction', "")
+        if si:
+            content = si if isinstance(si, str) else " ".join(p.text for p in getattr(si, 'parts', []) if p.text)
+            messages.append({"role": "system", "content": content})
             
-            # Case A: It's a raw string
-            if isinstance(si, str):
-                count += self.tokenizer.count_tokens(si).total_tokens
+        # 2. History (Text + Tool Results + Function Calls)
+        for content in getattr(request, 'contents', []):
+            role = "assistant" if content.role == "model" else "user"
+            combined_text = []
             
-            # Case B: It's a Content object with .parts
-            elif hasattr(si, 'parts'):
-                for part in si.parts:
-                    if hasattr(part, 'text') and part.text:
-                        count += self.tokenizer.count_tokens(part.text).total_tokens
-        
-        # 2. Robust Content (History) Counting
-        if hasattr(llm_request, 'contents'):
-            for content in llm_request.contents:
-                # Some contents might also just be strings in certain ADK versions
-                if isinstance(content, str):
-                    count += self.tokenizer.count_tokens(content).total_tokens
-                    continue
-                
-                # Otherwise, iterate through parts
-                if hasattr(content, 'parts'):
-                    for part in content.parts:
-                        if hasattr(part, 'text') and part.text:
-                            count += self.tokenizer.count_tokens(part.text).total_tokens
-                        elif hasattr(part, 'inline_data') or hasattr(part, 'file_data'):
-                            count += 258 # Standard Gemini cost for media
-        
-        # 3. Add safety buffer for tool definitions/JSON overhead
-        # (Tier 1 is very sensitive, so 15% is a safe bet)
-        return int(count * 1.15) + 150
+            if hasattr(content, 'parts'):
+                for part in content.parts:
+                    if part.text:
+                        combined_text.append(part.text)
+                    # TOOL RESULTS (This is usually where the hidden bulk lives)
+                    elif hasattr(part, 'function_response') and part.function_response:
+                        # Convert the tool output dict to string to count it
+                        combined_text.append(str(part.function_response.response))
+                    # TOOL CALLS (The model's intent to use a tool)
+                    elif hasattr(part, 'function_call') and part.function_call:
+                        combined_text.append(str(part.function_call.args))
+            
+            messages.append({"role": role, "content": " ".join(combined_text)})
+
+        # 3. TOOL DEFINITIONS (The biggest hidden cost in agents)
+        # Each tool schema is roughly 200-1000 tokens depending on complexity
+        tool_overhead = 0
+        if hasattr(request, 'tools') and request.tools:
+            # We stringify the first tool to estimate average schema size
+            sample_tool = str(request.tools[0])
+            avg_tool_size = token_counter(model="gpt-4", text=sample_tool)
+            tool_overhead = avg_tool_size * len(request.tools)
+
+        try:
+            # Use gpt-4 as a proxy for Gemini 3 density if it's underestimating
+            base_count = token_counter(model="gpt-4", messages=messages)
+            return base_count + tool_overhead + 200 # Constant overhead buffer
+        except Exception:
+            return 5000 # Panic fallback
+
 
     async def _get_available_capacity(self) -> int:
         """Uses peek() to estimate how many tokens are currently in the bucket."""
