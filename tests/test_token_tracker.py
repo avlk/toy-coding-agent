@@ -36,9 +36,9 @@ class TestTokenUsageTracker:
         tracker.record("test-model", metadata, 1.5)
         
         assert "test-model" in tracker.stats
-        assert tracker.stats["test-model"]["total_token_count"] == 100
-        assert tracker.stats["test-model"]["llm_run_count"] == 1
-        assert tracker.stats["test-model"]["total_time"] == 1.5
+        assert tracker.stats["test-model"].total_token_count == 100
+        assert tracker.stats["test-model"].llm_run_count == 1
+        assert tracker.stats["test-model"].total_time == 1.5
     
     def test_record_multiple_calls(self):
         tracker = TokenUsageTracker()
@@ -48,10 +48,10 @@ class TestTokenUsageTracker:
         tracker.record("test-model", metadata1, 1.0)
         tracker.record("test-model", metadata2, 2.0)
         
-        assert tracker.stats["test-model"]["total_token_count"] == 250
-        assert tracker.stats["test-model"]["prompt_token_count"] == 80
-        assert tracker.stats["test-model"]["llm_run_count"] == 2
-        assert tracker.stats["test-model"]["total_time"] == 3.0
+        assert tracker.stats["test-model"].total_token_count == 250
+        assert tracker.stats["test-model"].prompt_token_count == 80
+        assert tracker.stats["test-model"].llm_run_count == 2
+        assert tracker.stats["test-model"].total_time == 3.0
     
     def test_record_multiple_models(self):
         tracker = TokenUsageTracker()
@@ -62,8 +62,8 @@ class TestTokenUsageTracker:
         tracker.record("model-2", metadata2, 2.0)
         
         assert len(tracker.stats) == 2
-        assert tracker.stats["model-1"]["total_token_count"] == 100
-        assert tracker.stats["model-2"]["total_token_count"] == 200
+        assert tracker.stats["model-1"].total_token_count == 100
+        assert tracker.stats["model-2"].total_token_count == 200
     
     def test_record_with_none_values(self):
         """Test handling of None values in metadata."""
@@ -78,8 +78,8 @@ class TestTokenUsageTracker:
         tracker = TokenUsageTracker()
         tracker.record("test-model", NoneMetadata(), 1.0)
         
-        assert tracker.stats["test-model"]["total_token_count"] == 0
-        assert tracker.stats["test-model"]["llm_run_count"] == 1
+        assert tracker.stats["test-model"].total_token_count == 0
+        assert tracker.stats["test-model"].llm_run_count == 1
     
     def test_summary_empty_stats(self):
         tracker = TokenUsageTracker()

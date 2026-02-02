@@ -5,19 +5,70 @@ This module provides the TokenUsageTracker class for tracking and reporting
 token usage statistics across multiple LLM models.
 """
 
+class UsageStats:
+    """A simple class to hold usage statistics for an LLM call."""
+
+    class EMPTY_STATS:
+        """"An empty statistics object."""
+        total_token_count = 0
+        cached_content_token_count = 0
+        candidates_token_count = 0
+        prompt_token_count = 0
+        thoughts_token_count = 0
+        tool_use_prompt_token_count = 0
+
+    def __init__(self, metadata = EMPTY_STATS, response_time: float = 0.0):
+        self.total_token_count = metadata.total_token_count or 0
+        self.cached_content_token_count = metadata.cached_content_token_count or 0
+        self.candidates_token_count = metadata.candidates_token_count or 0
+        self.prompt_token_count = metadata.prompt_token_count or 0
+        self.thoughts_token_count = metadata.thoughts_token_count or 0
+        self.tool_use_prompt_token_count = metadata.tool_use_prompt_token_count or 0
+        self.total_time = response_time
+        self.llm_run_count = 1 if metadata != self.EMPTY_STATS else 0
+        self.function_calls = {}
+    
+    def __add__(self, other: 'UsageStats') -> 'UsageStats':
+        """Add another UsageStats object's values to this one."""
+        self.total_token_count += other.total_token_count
+        self.cached_content_token_count += other.cached_content_token_count
+        self.candidates_token_count += other.candidates_token_count
+        self.prompt_token_count += other.prompt_token_count
+        self.thoughts_token_count += other.thoughts_token_count
+        self.tool_use_prompt_token_count += other.tool_use_prompt_token_count
+        self.total_time += other.total_time
+        self.llm_run_count += other.llm_run_count
+        # Merge function call statistics. For every function called, sum the counts.
+        for func_name, call_info in other.function_calls.items():
+            if func_name not in self.function_calls:
+                self.function_calls[func_name] = {'count': 0, 'success': 0, 'failure': 0}
+            self.function_calls[func_name]['count'] += call_info['count']
+            self.function_calls[func_name]['success'] += call_info['success']
+            self.function_calls[func_name]['failure'] += call_info['failure']
+        return self
+
+    def billable_tokens(self) -> dict[str, int]:
+        """
+        Get billable token counts from a statistics item.
+        
+        Args:
+            stat_item: A statistics dictionary for a model
+
+        Returns:
+            Dictionary with billable token counts
+        """     
+        input = self.prompt_token_count + self.tool_use_prompt_token_count
+        output =  self.candidates_token_count + self.thoughts_token_count
+        cached = self.cached_content_token_count
+        input -= cached
+        return {
+            'cached': cached,
+            'input': input,
+            'output': output,
+        }
 
 class TokenUsageTracker:
     """Tracks token usage statistics across multiple LLM models."""
-    EMPTY_STATS = {
-        'total_token_count': 0,
-        'cached_content_token_count': 0,
-        'candidates_token_count': 0,
-        'prompt_token_count': 0,
-        'thoughts_token_count': 0,
-        'tool_use_prompt_token_count': 0,
-        'llm_run_count': 0,
-        'total_time': 0.0
-    }
 
     PRICING = {
         # Pricing data (per 1M tokens)
@@ -63,18 +114,31 @@ class TokenUsageTracker:
         """
         # Initialize stats for new models
         if model_name not in self.stats:
-            self.stats[model_name] = TokenUsageTracker.EMPTY_STATS.copy()
+            self.stats[model_name] = UsageStats()
         
         # Update counters
-        stats = self.stats[model_name]
-        stats['total_token_count'] += metadata.total_token_count or 0
-        stats['cached_content_token_count'] += metadata.cached_content_token_count or 0
-        stats['candidates_token_count'] += metadata.candidates_token_count or 0
-        stats['prompt_token_count'] += metadata.prompt_token_count or 0
-        stats['thoughts_token_count'] += metadata.thoughts_token_count or 0
-        stats['tool_use_prompt_token_count'] += metadata.tool_use_prompt_token_count or 0
-        stats['llm_run_count'] += 1
-        stats['total_time'] += response_time
+        self.stats[model_name] += UsageStats(metadata, response_time)
+
+    def record_function_call(self, model_name: str, function_name: str, success: bool):
+        """
+        Record a function call made by the LLM.
+        
+        Args:
+            model_name: Name of the LLM model
+            function_name: Name of the function called
+            success: Whether the function call was successful
+        """
+        # This method can be expanded to track function call statistics if needed.
+        # Initialize stats for new models
+        if model_name not in self.stats:
+            self.stats[model_name] = UsageStats()
+        if function_name not in self.stats[model_name].function_calls:
+            self.stats[model_name].function_calls[function_name] = {'count': 0, 'success': 0, 'failure': 0}
+        self.stats[model_name].function_calls[function_name]['count'] += 1
+        if success:
+            self.stats[model_name].function_calls[function_name]['success'] += 1
+        else:
+            self.stats[model_name].function_calls[function_name]['failure'] += 1
 
     def record_time(self, model_name: str, response_time: float):
         """
@@ -86,11 +150,10 @@ class TokenUsageTracker:
         """
         # Initialize stats for new models
         if model_name not in self.stats:
-            self.stats[model_name] = TokenUsageTracker.EMPTY_STATS.copy()
+            self.stats[model_name] = UsageStats()
         
         # Update time counter
-        stats = self.stats[model_name]
-        stats['total_time'] += response_time
+        self.stats[model_name].response_time += response_time
     
     def print_call_info(self, metadata, response_time: float):
         """
@@ -109,26 +172,6 @@ class TokenUsageTracker:
             metadata.tool_use_prompt_token_count or 0
         ))
         print(f"Time taken for LLM call: {response_time:.1f} seconds")
-    
-    def billable_tokens(self, stat_item) -> dict[str, int]:
-        """
-        Get billable token counts from a statistics item.
-        
-        Args:
-            stat_item: A statistics dictionary for a model
-
-        Returns:
-            Dictionary with billable token counts
-        """     
-        input = stat_item['prompt_token_count'] + stat_item['tool_use_prompt_token_count']
-        output =  stat_item['candidates_token_count'] + stat_item['thoughts_token_count']
-        cached = stat_item['cached_content_token_count']
-        input -= cached
-        return {
-            'cached': cached,
-            'input': input,
-            'output': output,
-        }
 
     def summary(self) -> list[str]:
         """
@@ -147,18 +190,18 @@ class TokenUsageTracker:
         lines.append("=" * 80)
         
         for model_name, stats in sorted(self.stats.items()):
-            avg_time = stats['total_time'] / stats['llm_run_count'] if stats['llm_run_count'] > 0 else 0
-            billable = self.billable_tokens(stats)
+            avg_time = stats.total_time / stats.llm_run_count if stats.llm_run_count > 0 else 0
+            billable = stats.billable_tokens()
             lines.append("")
             lines.append(f"🤖 Model: {model_name}")
-            lines.append(f"   Runs: {stats['llm_run_count']}")
-            lines.append(f"   Time: {stats['total_time']:.1f}s total, {avg_time:.1f}s avg per call")
-            lines.append(f"   Total tokens: {stats['total_token_count']:,}")
-            lines.append(f"   ├─ Prompt: {stats['prompt_token_count']:,}")
-            lines.append(f"   ├─ Candidates: {stats['candidates_token_count']:,}")
-            lines.append(f"   ├─ Cached: {stats['cached_content_token_count']:,}")
-            lines.append(f"   ├─ Thoughts: {stats['thoughts_token_count']:,}")
-            lines.append(f"   └─ Tool use: {stats['tool_use_prompt_token_count']:,}")
+            lines.append(f"   Runs: {stats.llm_run_count}")
+            lines.append(f"   Time: {stats.total_time:.1f}s total, {avg_time:.1f}s avg per call")
+            lines.append(f"   Total tokens: {stats.total_token_count:,}")
+            lines.append(f"   ├─ Prompt: {stats.prompt_token_count:,}")
+            lines.append(f"   ├─ Candidates: {stats.candidates_token_count:,}")
+            lines.append(f"   ├─ Cached: {stats.cached_content_token_count:,}")
+            lines.append(f"   ├─ Thoughts: {stats.thoughts_token_count:,}")
+            lines.append(f"   └─ Tool use: {stats.tool_use_prompt_token_count:,}")
             lines.append(f"   Billable tokens:")
             lines.append(f"   ├─ Input: {billable['input']:,}")
             lines.append(f"   ├─ Output: {billable['output']:,}")
@@ -173,11 +216,15 @@ class TokenUsageTracker:
                 lines.append(f"   ├─ Input: ${cost_input:.4f}")
                 lines.append(f"   ├─ Output: ${cost_output:.4f}")
                 lines.append(f"   └─ Cached: ${cost_cached:.4f}")
-        
+            # Function call statistics
+            if stats.function_calls:
+                lines.append(f"   Function Calls:")
+                for func_name, call_info in stats.function_calls.items():
+                    lines.append(f"   ├─ {func_name}: {call_info['count']} calls (Success: {call_info['success']}, Failure: {call_info['failure']})")
         # Add grand totals
-        total_runs = sum(s['llm_run_count'] for s in self.stats.values())
-        total_tokens = sum(s['total_token_count'] for s in self.stats.values())
-        total_time = sum(s['total_time'] for s in self.stats.values())
+        total_runs = sum(s.llm_run_count for s in self.stats.values())
+        total_tokens = sum(s.total_token_count for s in self.stats.values())
+        total_time = sum(s.total_time for s in self.stats.values())
         
         lines.append("")
         lines.append("-" * 80)
