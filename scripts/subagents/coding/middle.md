@@ -129,3 +129,4 @@ to finish for any reason, you MUST provide a final summary in this format:
 3. How did you like the system instructions and tools provided to you? Any suggestions for improvement? 
 
 Always end your work with this summary format. Do not end without providing this summary.
+When you are fully done with your work, output ###STOPWORD### in your response to terminate the conversation.
