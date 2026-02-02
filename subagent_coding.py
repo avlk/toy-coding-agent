@@ -89,7 +89,7 @@ async def test_coding_agent(model_name: str, test_name: str, script_name: str, n
 
             prepare_test_files(test_name)
             parts = [("Use Case", use_case), ("Goals", goals), ("Review Feedback", feedback)]
-            await subagent.query(query="Implement changes addressing feedback items.", parts=parts)
+            await subagent.query(query="Implement changes addressing feedback items.", parts=parts, stopword="###STOPWORD###", n_iterations=10)
 
             # run ruff check to verify no syntax errors remain using MCPInstance
             print(f"\n🔍 Executing project to verify...")

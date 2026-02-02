@@ -91,6 +91,15 @@ class SubAgentGoogle:
         else:
             print(f"🤖➡️ Function call: {function_call}", flush=True)
 
+    def _function_response_result(self, result):
+        """Extract success status from function response."""
+        function_response = result.get('structuredContent', {})
+        if 'success' in function_response:
+            is_success = function_response['success']
+        else:
+            is_success = not result.get('isError', False)
+        return is_success        
+
     def _function_response_debug_print(self, result):
         # Check for 'success' key first, otherwise fall back to isError
         function_response = result.get('structuredContent', {})
@@ -108,7 +117,7 @@ class SubAgentGoogle:
         print(f"🤖↩️ Function response: {response}", flush=True)                    
 
 
-    async def _async_query(self, query=None, parts=None) -> Dict[str, Any]:
+    async def _async_query(self, query=None, parts=None, stopword=None, n_iterations=20) -> Dict[str, Any]:
         """Async implementation using LlmAgent."""
         if not self.agent or not self.agent_runner:
             raise RuntimeError("LlmAgent not properly initialized")
@@ -150,49 +159,72 @@ class SubAgentGoogle:
             if self.debug:
                 print(f"⚠️  Session creation failed, continuing anyway: {session_error}")
         
-        # Run agent with streaming events
-        async for event in self.agent_runner.run_async(
-            user_id=user_id,
-            session_id=session_id, 
-            new_message=types.Content(role='user', parts=[types.Part(text=message)])
-        ):
-            # Handle event content (text and function calls)
-            agent_text = ""
-            conversation_history.append(event)
-            if self.progress_indication:
-                print(".", end="", flush=True)
-            if hasattr(event, 'content') and hasattr(event.content, 'parts') and event.content.parts:
-                for part in event.content.parts:
-                    # Handle text response
-                    if hasattr(part, 'text') and part.text:
-                        agent_text += part.text
-                    
-                    # Handle function calls
-                    if hasattr(part, 'function_call') and part.function_call:
-                        function_call_count += 1
-                        if self.debug:
-                            self._function_call_debug_print(part.function_call)
-                            
-                    # Handle function responses
-                    if hasattr(part, 'function_response') and part.function_response:
-                        if self.debug:
-                            self._function_response_debug_print(part.function_response.response)
+        stopword_received = False
+        n_iteration = 0
+        message=types.Content(role='user', parts=[types.Part(text=message)])
 
-            if self.debug and agent_text:
-                print(f"🤖📢 {agent_text}")
-            final_text = agent_text
+        while n_iteration < n_iterations:
+            # Run agent with streaming events
+            async for event in self.agent_runner.run_async(
+                user_id=user_id,
+                session_id=session_id, 
+                new_message=message
+            ):
+                # Handle event content (text and function calls)
+                agent_text = ""
+                conversation_history.append(event)
+                if self.progress_indication:
+                    print(".", end="", flush=True)
+                if hasattr(event, 'content') and hasattr(event.content, 'parts') and event.content.parts:
+                    for part in event.content.parts:
+                        # Handle text response
+                        if hasattr(part, 'text') and part.text:
+                            agent_text += part.text
+                        
+                        # Handle function calls
+                        if hasattr(part, 'function_call') and part.function_call:
+                            function_call_count += 1
+                            if self.debug:
+                                self._function_call_debug_print(part.function_call)
+                                
+                        # Handle function responses
+                        if hasattr(part, 'function_response') and part.function_response:
+                            if self.debug:
+                                self._function_response_debug_print(part.function_response.response)
+                            function_name = part.function_response.name if part.function_response.name else "unknown"
+                            is_success = self._function_response_result(part.function_response.response)
+                            # Record function call stats
+                            self.token_tracker.record_function_call(self.model, function_name, is_success)
 
-            # Extract token usage if available
-            if hasattr(event, 'usage_metadata') and event.usage_metadata:
-                token_usage = event.usage_metadata
-            
-            # Check if this is the final response
-            is_final = hasattr(event, 'is_final_response') and event.is_final_response()
-            if is_final and self.debug:
-                print("✅ Final response received")
-            # Don't break immediately - let the loop finish processing any remaining content
-            # The while loop will exit naturally when no more events are available
-        
+                if self.debug and agent_text:
+                    print(f"🤖📢 {agent_text}")
+                final_text = agent_text
+
+                if stopword in agent_text:
+                    stopword_received = True
+                    if self.debug:
+                        print("🚦 Stopword received.")
+
+                # Extract token usage if available
+                if hasattr(event, 'usage_metadata') and event.usage_metadata:
+                    token_usage = event.usage_metadata                
+                        
+                # Check if this is the final response
+                is_final = hasattr(event, 'is_final_response') and event.is_final_response()
+                if is_final and self.debug:
+                    print("✅ Final response received")
+                # Don't break immediately - let the loop finish processing any remaining content
+                # The while loop will exit naturally when no more events are available
+
+            if not stopword:
+                break  # No stopword specified, exit after first run
+            elif stopword_received:
+                break  # Stopword received, exit loop
+            else:
+                print("🛑 No stopword received, continuing.")
+                n_iteration += 1
+                message = types.Content(role='user', parts=[types.Part(text="You did not finish your tasks. Please continue and complete them. When done, end with '###STOPWORD###'.")])
+
         end_time = time.monotonic()
         generation_time = end_time - start_time
         
@@ -212,13 +244,13 @@ class SubAgentGoogle:
             "response_time": generation_time
         }
 
-    async def query(self, query=None, parts=None) -> Dict[str, Any]:
+    async def query(self, query=None, parts=None, stopword=None, n_iterations=20) -> Dict[str, Any]:
         """Async query interface. Caller must manage event loop."""
         max_retries = 10
         
         for attempt in range(max_retries):
             try:
-                return await self._async_query(query=query, parts=parts)
+                return await self._async_query(query=query, parts=parts, stopword=stopword, n_iterations=n_iterations)
                     
             except errors.ServerError as e:
                 if attempt < max_retries - 1:
@@ -243,6 +275,6 @@ class SubAgentGoogle:
                 print(f"❌ Non-retryable error: {e}")
                 raise
 
-    def query_sync(self, query=None, parts=None) -> Dict[str, Any]:
+    def query_sync(self, query=None, parts=None, stopword=None, n_iterations=20) -> Dict[str, Any]:
         """Sync wrapper - creates new event loop (use sparingly)."""
-        return asyncio.run(self.query(query=query, parts=parts))
+        return asyncio.run(self.query(query=query, parts=parts, stopword=stopword, n_iterations=n_iterations))
