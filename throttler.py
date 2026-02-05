@@ -22,12 +22,14 @@ class ElegantThrottler:
 
         # RPM Limit: Every call has a cost of 1
         self.rpm_limiter = Throttled(
+            "gemini_rpm",
             using="token_bucket",
             quota=rate_limiter.per_min(rpm)
         )
         
         # TPM Limit: Every call has a cost of N (tokens)
         self.tpm_limiter = Throttled(
+            "gemini_tpm",
             using="token_bucket",
             quota=rate_limiter.per_min(tpm)
         )
@@ -84,17 +86,20 @@ class ElegantThrottler:
 
     async def _get_available_capacity(self) -> int:
         """Uses peek() to estimate how many tokens are currently in the bucket."""
-        state = await self.tpm_limiter.peek(key="global_gate")
-        return (state.remaining / state.limit)
+        tpm_state = await self.tpm_limiter.peek(key="gemini_tpm")
+        rpm_state = await self.rpm_limiter.peek(key="gemini_rpm")
+        return (tpm_state.remaining / tpm_state.limit), (rpm_state.remaining / rpm_state.limit)
 
     async def _draw_bar(self):
         """Draws the bar based on actual bucket state via peek()."""
-        current_capacity = await self._get_available_capacity()
+        tpm, rpm = await self._get_available_capacity()
         
         bar_length = 20
-        filled_length = int(bar_length * current_capacity)
-        bar = '█' * filled_length + '-' * (bar_length - filled_length)
-        print(f"🛑 [TPM level] |{bar}|")
+        tpm_length = int(bar_length * tpm)
+        bar_tpm = '█' * tpm_length + '-' * (bar_length - tpm_length)
+        rpm_length = int(bar_length * rpm)
+        bar_rpm = '█' * rpm_length + '-' * (bar_length - rpm_length)
+        print(f"🛑 [TPM level] |{bar_tpm}| [RPM level] |{bar_rpm}|")
         
     async def before_call(self, callback_context, llm_request):
         async with self.lock:
@@ -109,10 +114,16 @@ class ElegantThrottler:
                 print(f"⚖️  [TPM GATE] Debt: +{self.token_debt} tokens")
                 print(f"🚀 [NEXT CALL] Est. Cost: {self.last_prediction} tokens")
 
-            # 3. Apply the throttle
-            await self.rpm_limiter.limit(key="global_gate", cost=1, timeout=120)
-            await self.tpm_limiter.limit(key="global_gate", cost=current_cost, timeout=120)
-            
+            # 3. Apply the throttle (concurrently)
+            start_time = asyncio.get_event_loop().time()
+            await asyncio.gather(
+                self.rpm_limiter.limit(key="gemini_rpm", cost=1, timeout=120),
+                self.tpm_limiter.limit(key="gemini_tpm", cost=current_cost, timeout=120)
+            )
+            time_taken = asyncio.get_event_loop().time() - start_time
+            if self.debug and time_taken > 0.1:
+                print(f"⏱️  [THROTTLE] Waited {time_taken:.2f} seconds to proceed.")
+
             # Reset debt now that we've "paid" it by waiting
             self.token_debt = 0
             return None
