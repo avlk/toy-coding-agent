@@ -153,7 +153,7 @@ class TokenUsageTracker:
             self.stats[model_name] = UsageStats()
         
         # Update time counter
-        self.stats[model_name].response_time += response_time
+        self.stats[model_name].total_time += response_time
     
     def print_call_info(self, metadata, response_time: float):
         """
