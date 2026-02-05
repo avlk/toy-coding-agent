@@ -160,79 +160,89 @@ class SubAgentGoogle:
                 print(f"⚠️  Session creation failed, continuing anyway: {session_error}")
         
         stopword_received = False
+        abnormal_termination = False
         n_iteration = 0
         message=types.Content(role='user', parts=[types.Part(text=message)])
 
-        while n_iteration < n_iterations:
-            # Run agent with streaming events
-            async for event in self.agent_runner.run_async(
-                user_id=user_id,
-                session_id=session_id, 
-                new_message=message
-            ):
-                # Handle event content (text and function calls)
-                agent_text = ""
-                conversation_history.append(event)
-                if self.progress_indication:
-                    print(".", end="", flush=True)
-                if hasattr(event, 'content') and hasattr(event.content, 'parts') and event.content.parts:
-                    for part in event.content.parts:
-                        # Handle text response
-                        if hasattr(part, 'text') and part.text:
-                            agent_text += part.text
-                        
-                        # Handle function calls
-                        if hasattr(part, 'function_call') and part.function_call:
-                            function_call_count += 1
-                            if self.debug:
-                                self._function_call_debug_print(part.function_call)
-                                
-                        # Handle function responses
-                        if hasattr(part, 'function_response') and part.function_response:
-                            if self.debug:
-                                self._function_response_debug_print(part.function_response.response)
-                            function_name = part.function_response.name if part.function_response.name else "unknown"
-                            is_success = self._function_response_result(part.function_response.response)
-                            # Record function call stats
-                            self.token_tracker.record_function_call(self.model, function_name, is_success)
+        try:
+            while n_iteration < n_iterations:
+                # Run agent with streaming events
+                async for event in self.agent_runner.run_async(
+                    user_id=user_id,
+                    session_id=session_id, 
+                    new_message=message
+                ):
+                    # Handle event content (text and function calls)
+                    agent_text = ""
+                    conversation_history.append(event)
+                    if self.progress_indication:
+                        print(".", end="", flush=True)
+                    if hasattr(event, 'content') and hasattr(event.content, 'parts') and event.content.parts:
+                        for part in event.content.parts:
+                            # Handle text response
+                            if hasattr(part, 'text') and part.text:
+                                agent_text += part.text
+                            
+                            # Handle function calls
+                            if hasattr(part, 'function_call') and part.function_call:
+                                function_call_count += 1
+                                if self.debug:
+                                    self._function_call_debug_print(part.function_call)
+                                    
+                            # Handle function responses
+                            if hasattr(part, 'function_response') and part.function_response:
+                                if self.debug:
+                                    self._function_response_debug_print(part.function_response.response)
+                                function_name = part.function_response.name if part.function_response.name else "unknown"
+                                is_success = self._function_response_result(part.function_response.response)
+                                # Record function call stats
+                                self.token_tracker.record_function_call(self.model, function_name, is_success)
 
-                if self.debug and agent_text:
-                    print(f"🤖📢 {agent_text}")
-                final_text = agent_text
+                    if self.debug and agent_text:
+                        print(f"🤖📢 {agent_text}")
+                    final_text = agent_text
 
-                if stopword in agent_text:
-                    stopword_received = True
-                    if self.debug:
-                        print("🚦 Stopword received.")
+                    if stopword in agent_text:
+                        stopword_received = True
+                        if self.debug:
+                            print("🚦 Stopword received.")
 
-                # Extract token usage if available
-                if hasattr(event, 'usage_metadata') and event.usage_metadata:
-                    token_usage = event.usage_metadata                
-                        
-                # Check if this is the final response
-                is_final = hasattr(event, 'is_final_response') and event.is_final_response()
-                if is_final and self.debug:
-                    print("✅ Final response received")
-                # Don't break immediately - let the loop finish processing any remaining content
-                # The while loop will exit naturally when no more events are available
+                    # Extract token usage if available
+                    if hasattr(event, 'usage_metadata') and event.usage_metadata:
+                        token_usage = event.usage_metadata     
+                        self.token_tracker.record(self.model, token_usage, 0)     
+                        if self.debug:
+                            lap_time = time.monotonic() - start_time
+                            self.token_tracker.print_call_info(token_usage, lap_time)     
+                    # Check if this is the final response
+                    is_final = hasattr(event, 'is_final_response') and event.is_final_response()
+                    if is_final and self.debug:
+                        print("✅ Final response received")
+                    # Don't break immediately - let the loop finish processing any remaining content
+                    # The while loop will exit naturally when no more events are available
 
-            if not stopword:
-                break  # No stopword specified, exit after first run
-            elif stopword_received:
-                break  # Stopword received, exit loop
-            else:
-                print("🛑 No stopword received, continuing.")
-                n_iteration += 1
-                message = types.Content(role='user', parts=[types.Part(text="You did not finish your tasks. Please continue and complete them. When done, end with '###STOPWORD###'.")])
-
+                if not stopword:
+                    break  # No stopword specified, exit after first run
+                elif stopword_received:
+                    break  # Stopword received, exit loop
+                else:
+                    print("🛑 No stopword received, continuing.")
+                    n_iteration += 1
+                    message = types.Content(role='user', parts=[types.Part(text="You did not finish your tasks. Please continue and complete them. When done, end with '###STOPWORD###'.")])
+        
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            print("\n🛑 Interrupted by user (Ctrl+C). Exiting gracefully...")
+            abnormal_termination = True
         end_time = time.monotonic()
         generation_time = end_time - start_time
+        self.token_tracker.record_time(self.model, generation_time)
         
-        # Track tokens if available
-        if token_usage:
-            self.token_tracker.record(self.model, token_usage, generation_time)
-            if self.debug:
-                self.token_tracker.print_call_info(token_usage, generation_time)
+        if abnormal_termination:
+            summary = self.token_tracker.summary()
+            print(f"📊 Usage summary for {self.model} before termination:")
+            for line in summary:
+                print(line)
+
         if self.progress_indication:
             print(" Done.")
 
