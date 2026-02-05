@@ -81,7 +81,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded
+            - success: Operation success status
             - files: List of file metadata dictionaries (only present if success=True)
             - error: Error message (only present if success=False)
         """
@@ -110,7 +110,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded
+            - success: Operation success status
             - content: List of lines (line endings removed, only present if success=True)
             - metadata: File metadata (only present if success=True)
             - error: Error message (only present if success=False)
@@ -141,10 +141,23 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-                - success: Boolean indicating if operation succeeded
+                - success: Operation success status. True for successful creation/update
                 - message: Description of the result
-                - metadata: File metadata (only present on success)
+                - metadata: File metadata (only present when file was created/updated)
                 - error: Error message (only present if success=False)
+        
+        Special case - no_change:
+            When overwrite=True and new content is identical to existing file, returns:
+            - success: True (operation completed successfully)
+            - message: 'File content unchanged'
+            - metadata: Current file metadata
+            
+            ⚠️ CRITICAL: If you get 'no_change', your intended changes didn't apply!
+            Your new content matched the existing file exactly.
+            To fix: 1) load_file() to see current content
+                   2) Understand what you actually wanted to change
+                   3) Create corrected content
+                   4) Retry with correct changes
         """
         logger.info(f"create_file({file_path!r}, overwrite={overwrite}) called")
         result = pf.create_file(file_path, content, overwrite=overwrite)
@@ -180,7 +193,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded
+            - success: Operation success status
             - path: Path of removed file (only present if success=True)
             - error: Error message (only present if success=False)
         """
@@ -210,7 +223,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded
+            - success: Operation success status
             - lines: Requested lines (only present if success=True)
             - metadata: File metadata (only present if success=True)
             - error: Error message (only present if success=False)
@@ -246,7 +259,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded
+            - success: Operation success status
             - matches: List of matches containing file, line_number, and line content (only present if success=True)
             - error: Error message (only present if success=False)
         """
@@ -284,7 +297,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded (always True unless error)
+            - success: Operation success status (always True unless error)
             - definitions: List of definitions containing:
                 - type: 'class', 'function', or 'method'
                 - name: name of the definition
@@ -323,7 +336,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-            - success: Boolean - False if issues found or execution failed, True only if no issues
+            - success: Operation success status - False if issues found or execution failed, True only if no issues
             - issues: List of issue dictionaries, each containing:
                 - file: Relative file path
                 - line: Line number (1-indexed)
@@ -336,7 +349,9 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             - error: Error message (present if success=False)
         
         Note:
-            Returns success=False and error="There were syntax issues" when linting issues are found.
+            Returns success=False when ANY linting issues are found (this is by design).
+            Returns success=True only when project has zero issues.
+            Check 'issues' list for details even when success=False.
             Returns success=False with specific error when Ruff execution fails (e.g., not installed).
         
         Common rule codes:
@@ -358,13 +373,16 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         storing them with a unique ID for later restoration. Excluded files 
         (like .venv, __pycache__) are not included in snapshots.
         
+        💡 Best practice: Create a snapshot at the START of each implementation iteration
+        before making any changes, so you can revert if needed.
+        
         Args:
             label: Optional descriptive label for the snapshot (default: auto-generated with timestamp)
                    Example: "Before refactoring", "Working version 1.0"
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded (always True unless error)
+            - success: Operation success status (always True unless error)
             - snapshot_id: Unique ID of the created snapshot (sequential number: "1", "2", etc.)
             - error: Error message (only present if success=False)
         
@@ -398,7 +416,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded (always True unless error)
+            - success: Operation success status (always True unless error)
             - snapshots: List of snapshot dictionaries, each containing:
                 - id: Snapshot ID (string)
                 - timestamp: ISO formatted creation timestamp
@@ -441,7 +459,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded
+            - success: Operation success status
             - snapshot_id: ID of the restored snapshot
             - error: Error message (only present if success=False)
         
@@ -570,15 +588,20 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         For each file that matches the file_pattern, loads the file,
         performs pattern replacement, and saves it if any replacements were made.
         
+        Note: Returns success=False if no matches found (even though operation executed correctly).
+        Check the 'replacements' dict to see which files were modified and counts.
+        
         Args:
             pattern: String or regex pattern to search for
             replacement: String to replace matches with
             is_regex: If True, treat pattern as regex (default: False)
+                     When True, replacement can use backreferences (\1, \2, etc.)
             file_pattern: Glob pattern for filtering which files to process (default: "*")
+                         Examples: "*.py", "src/**/*.py"
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded
+            - success: Operation success status
             - replacements: Dictionary mapping relative file path to number of replacements made
             - error: Error message (only present if success=False)
         """
@@ -621,12 +644,16 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         Args:
             file_path: Relative path to the file (relative to project folder)
             search_lines: List of lines to search for (must match exactly)
+                         ⚠️ CRITICAL: Pass ["line1", "line2"], NOT "line1\nline2"
+                         Each line is a separate string in the list
             replace_lines: List of lines to replace with
+                          ⚠️ CRITICAL: Pass ["line1", "line2"], NOT "line1\nline2"
+                          Each line is a separate string in the list
             only_around_line: If not None, only replace the match closest to this line number (1-indexed)
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded
+            - success: Operation success status
             - replacements: Number of replacement operations performed
             - error: Error message (only present if success=False)
         """
@@ -677,15 +704,24 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         - There might be minor whitespace differences
         - You want to replace code near a specific line even if not an exact match
         
+        ⚠️ CRITICAL LIMITATIONS:
+        - Avoid calling this multiple times on the same file in one iteration
+        - After first replacement, around_line offsets change, causing subsequent calls to fail
+        - For multiple edits in same file: use multiline_replace_in_file or replace_in_files instead
+        
         Args:
             file_path: Relative path to the file (relative to project folder)
             search_lines: List of lines to search for (approximate match allowed, small differences OK)
+                         ⚠️ CRITICAL: Pass ["line1", "line2"], NOT "line1\nline2"
+                         Each line is a separate string in the list
             replace_lines: List of lines to replace with
+                          ⚠️ CRITICAL: Pass ["line1", "line2"], NOT "line1\nline2"
+                          Each line is a separate string in the list
             around_line: Line number around which to search for the match (1-indexed, required)
         
         Returns:
             Dictionary with:
-            - success: Boolean indicating if operation succeeded
+            - success: Operation success status
             - matched_line: Actual line number where replacement was made (only present if success=True)
             - error: Error message (only present if success=False)
         """
