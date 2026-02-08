@@ -132,8 +132,6 @@ class SubAgentGoogle:
             for title, content in parts:
                 message += f"\n\n## {title}\n{content}"
         
-        start_time = time.monotonic()
-        
         # Use a consistent session ID for this query
         session_id = f"{self.agent_name}_{int(time.time())}"
         user_id = f"{self.agent_name}_user"
@@ -163,10 +161,11 @@ class SubAgentGoogle:
         abnormal_termination = False
         n_iteration = 0
         message=types.Content(role='user', parts=[types.Part(text=message)])
-
+        query_start_time = asyncio.get_event_loop().time()
         try:
             while n_iteration < n_iterations:
                 # Run agent with streaming events
+                start_time = asyncio.get_event_loop().time()
                 async for event in self.agent_runner.run_async(
                     user_id=user_id,
                     session_id=session_id, 
@@ -212,14 +211,18 @@ class SubAgentGoogle:
                         token_usage = event.usage_metadata     
                         self.token_tracker.record(self.model, token_usage, 0)     
                         if self.debug:
-                            lap_time = time.monotonic() - start_time
-                            self.token_tracker.print_call_info(token_usage, lap_time)     
+                            elapsed_time = asyncio.get_event_loop().time() - query_start_time
+                            self.token_tracker.print_call_info(token_usage, elapsed_time)     
                     # Check if this is the final response
                     is_final = hasattr(event, 'is_final_response') and event.is_final_response()
                     if is_final and self.debug:
                         print("✅ Final response received")
                     # Don't break immediately - let the loop finish processing any remaining content
                     # The while loop will exit naturally when no more events are available
+
+                end_time = asyncio.get_event_loop().time()
+                generation_time = end_time - start_time
+                self.token_tracker.record_time(self.model, generation_time)
 
                 if not stopword:
                     break  # No stopword specified, exit after first run
@@ -229,13 +232,9 @@ class SubAgentGoogle:
                     print("🛑 No stopword received, continuing.")
                     n_iteration += 1
                     message = types.Content(role='user', parts=[types.Part(text="You did not finish your tasks. Please continue and complete them. When done, end with '###STOPWORD###'.")])
-        
         except (asyncio.CancelledError, KeyboardInterrupt):
             print("\n🛑 Interrupted by user (Ctrl+C). Exiting gracefully...")
             abnormal_termination = True
-        end_time = time.monotonic()
-        generation_time = end_time - start_time
-        self.token_tracker.record_time(self.model, generation_time)
         
         if abnormal_termination:
             summary = self.token_tracker.summary()

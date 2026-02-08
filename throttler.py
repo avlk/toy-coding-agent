@@ -15,10 +15,11 @@ from throttled.asyncio import Throttled
 from litellm import token_counter
 
 class ElegantThrottler:
-    def __init__(self, rpm: int, tpm: int, model: str):
+    def __init__(self, rpm: int, tpm: int, model: str, token_tracker=None):
         self.model_name = model
         self.tpm = tpm
         self.debug = False
+        self.token_tracker = token_tracker
 
         # RPM Limit: Every call has a cost of 1
         self.rpm_limiter = Throttled(
@@ -121,9 +122,11 @@ class ElegantThrottler:
                 self.tpm_limiter.limit(key="gemini_tpm", cost=current_cost, timeout=120)
             )
             time_taken = asyncio.get_event_loop().time() - start_time
+            if self.token_tracker and time_taken > 0.001:
+                self.token_tracker.record_time("throttle", time_taken)
+
             if self.debug and time_taken > 0.1:
                 print(f"⏱️  [THROTTLE] Waited {time_taken:.2f} seconds to proceed.")
-
             # Reset debt now that we've "paid" it by waiting
             self.token_debt = 0
             return None
@@ -147,6 +150,6 @@ class ElegantThrottler:
                     self.token_debt = 0
             return None
 
-def get_throttler(rpm: int, tpm: int, model: str) -> ElegantThrottler:
+def get_throttler(rpm: int, tpm: int, model: str, token_tracker=None) -> ElegantThrottler:
     """Factory to create the throttler instance."""
-    return ElegantThrottler(rpm, tpm, model=model)
+    return ElegantThrottler(rpm, tpm, model=model, token_tracker=token_tracker)

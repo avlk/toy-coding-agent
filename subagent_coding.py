@@ -68,7 +68,7 @@ async def test_coding_agent(model_name: str, test_name: str, script_name: str, n
 
     token_tracker = TokenUsageTracker()
     model_config = find_model_config(model_name)
-    request_throttler = get_throttler(model_config.rpm, model_config.tpm, model=model_config.name) 
+    request_throttler = get_throttler(model_config.rpm, model_config.tpm, model=model_config.name, token_tracker=token_tracker) 
 
     mcp = MCPInstance(project_path=f"solutions/{test_name}")
     if not await mcp.start():
