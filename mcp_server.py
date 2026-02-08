@@ -70,7 +70,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
     pf = ProjectFolder(project_path)
     
     # Expose list_files as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def list_files(pattern: str = "*") -> dict:
         """
         List all files in the project folder recursively.
@@ -99,7 +99,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             }
     
     # Expose load_file as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def load_file(file_path: str) -> dict:
         """
         Load and return the complete contents of a file.
@@ -183,7 +183,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         return result
     
     # Expose remove_file as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"destructiveHint": True})
     def remove_file(file_path: str) -> dict:
         """
         Remove a file from the project folder.
@@ -211,7 +211,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             }
     
     # Expose get_line_range as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def get_line_range(file_path: str, start_line: int, end_line: int) -> dict:
         """
         Retrieve a specific range of lines from a file.
@@ -240,7 +240,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             }
     
     # Expose search_files as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def search_files(
         pattern: str,
         is_regex: bool = False,
@@ -282,7 +282,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             }
     
     # Expose find_python_definition as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def find_python_definition(name: str, def_type: Optional[str] = None) -> dict:
         """
         Find Python class or function/method definitions by name.
@@ -320,7 +320,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             }
     
     # Expose run_ruff_check as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def run_ruff_check(file_pattern: str = "**/*.py", fix: bool = False) -> dict:
         """
         Run Ruff linter on project files and return structured linting results.
@@ -364,7 +364,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         return pf.run_ruff_check(file_pattern=file_pattern, fix=fix)
     
     # Expose create_snapshot as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def create_snapshot(label: Optional[str] = None) -> dict:
         """
         Create a snapshot of the current project state.
@@ -406,7 +406,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             }
     
     # Expose list_snapshots as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def list_snapshots() -> dict:
         """
         List all available snapshots with their metadata.
@@ -445,7 +445,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             }
     
     # Expose restore_snapshot as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"destructiveHint": True})
     def restore_snapshot(snapshot_id: str) -> dict:
         """
         Restore the project to a previous snapshot state.
@@ -491,8 +491,8 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                 'error': str(e)
             }
     
-    # Expose patch_project as MCP tool
-    @mcp.tool()
+    # Do not expose patch_project as MCP tool for a while
+    # @mcp.tool(annotations={"destructiveHint": True})
     def apply_patch(patch_content: str) -> dict:
         """
         Apply a unified diff patch to modify, create, or delete files in the project.
@@ -575,7 +575,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             raise ToolError(f"System error during patch application: {str(e)}")
     
     # Expose replace_in_files as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"destructiveHint": True})
     def replace_in_files(
         pattern: str,
         replacement: str,
@@ -628,7 +628,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             }
     
     # Expose multiline_replace_in_file as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"destructiveHint": True})
     def multiline_replace_in_file(
         file_path: str,
         search_lines: list[str],
@@ -685,7 +685,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             }
     
     # Expose fuzzy_replace_in_file as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"destructiveHint": True})
     def fuzzy_replace_in_file(
         file_path: str,
         search_lines: list[str],
@@ -752,7 +752,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             }
     
     # Expose execute_sandboxed as MCP tool
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def execute_project(cmd_args: str, timeout: int = 30) -> dict:
         """
         Execute a Python project with sandboxing.
