@@ -16,26 +16,27 @@
 import json
 import os
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
+from utils import to_lines
 
 class Checklist:
-    def __init__(self, filename: str, current_round: int):
+    def __init__(self, filename: str):
         self.filename = filename
-        self.current_round = current_round
         try:
             with open(self.filename, 'r') as f:
                 self.items = json.load(f)
         except FileNotFoundError:
             self.items: List[Dict[str, Any]] = []
 
-    def add_item(self, item_id: str, description: str, points: int, created_by: str):
+    def add_item(self, item_id: str, title: str, description: Union[str, List[str]], points: int, created_by: str, created_at: int):
         item = {
             "id": item_id,
-            "description": description,
+            "title": title,
+            "description": to_lines(description),
             "points": points,
             "completed": False,
             "created_by": created_by,
-            "created_at": self.current_round
+            "created_at": created_at
         }
         self.items.append(item)
 
@@ -43,6 +44,19 @@ class Checklist:
         for item in self.items:
             if item["id"] == item_id:
                 item["completed"] = True
+                break
+
+    def edit_item(self, item_id: str, title: str = None, description: Union[str, List[str], None] = None, points: int = None, completed: bool = None):
+        for item in self.items:
+            if item["id"] == item_id:
+                if title is not None:
+                    item["title"] = title
+                if description is not None:
+                    item["description"] = to_lines(description)
+                if points is not None:
+                    item["points"] = points
+                if completed is not None:
+                    item["completed"] = completed
                 break
 
     def save(self):
@@ -70,16 +84,15 @@ class Checklist:
 # - delete a checklist, which deletes the file and removes the reference from memory.
 
 class ChecklistFactory:
-    def __init__(self, folder_path: str, current_round: int):
+    def __init__(self, folder_path: str):
         self.folder_path = folder_path
-        self.current_round = current_round
         self.checklists: Dict[str, Checklist] = {}
 
     def get_checklist(self, checklist_name: str) -> Checklist:
         if checklist_name in self.checklists:
             return self.checklists[checklist_name]
 
-        checklist = Checklist(f"{self.folder_path}/{checklist_name}.json", self.current_round)
+        checklist = Checklist(f"{self.folder_path}/{checklist_name}.json")
         self.checklists[checklist_name] = checklist
         return checklist
 
