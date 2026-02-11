@@ -6,6 +6,24 @@ import time
 import asyncio
 from google.genai.types import FunctionDeclaration
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, StreamableHTTPConnectionParams
+from google.adk.tools.base_toolset import ToolPredicate
+from typing import List
+
+class McpToolFilter(ToolPredicate):
+    """Tool filter that is used instead of plain list of allowed tools in get_toolset()
+       method to allow filtering out tools by prefix."""
+    def __init__(self, allowed_tool_names: List[str] = None, blocked_tool_names: List[str] = None):
+        self.allowed_tool_names = allowed_tool_names
+        self.blocked_tool_names = blocked_tool_names
+
+    def __call__(self, tool, readonly_context=None) -> bool:
+        if self.allowed_tool_names is not None:
+            if tool.name not in self.allowed_tool_names:
+                return False
+        if self.blocked_tool_names is not None:
+            if tool.name in self.blocked_tool_names:
+                return False
+        return True
 
 
 class MCPInstance():
@@ -52,10 +70,10 @@ class MCPInstance():
 
         return False
 
-    def get_toolset(self, allowed_tools=None):
+    def get_toolset(self, allowed_tools=None, blocked_tools=None) -> McpToolset:
         mcp_params = {}
-        if allowed_tools:
-            mcp_params['tool_filter'] = allowed_tools
+        # Apply tool filter if allowed_tools is provided, disable all tools that start with "_" and not in allowed_tools
+        mcp_params['tool_filter'] = McpToolFilter(allowed_tool_names=allowed_tools, blocked_tool_names=blocked_tools)
 
         return McpToolset(connection_params=StreamableHTTPConnectionParams(
                 url=f"http://{self.mcp_host}:{self.mcp_port}/mcp",
