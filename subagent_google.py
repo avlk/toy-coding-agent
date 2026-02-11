@@ -201,7 +201,7 @@ class SubAgentGoogle:
                         print(f"🤖📢 {agent_text}")
                     final_text = agent_text
 
-                    if stopword in agent_text:
+                    if stopword and stopword in agent_text:
                         stopword_received = True
                         if self.debug:
                             print("🚦 Stopword received.")
