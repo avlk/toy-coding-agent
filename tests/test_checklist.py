@@ -32,8 +32,8 @@ class TestChecklist(unittest.TestCase):
                 "description": ["Test description"],
                 "points": 5,
                 "completed": False,
-                "created_by": "tester",
-                "created_at": 1
+                "create_role": "tester",
+                "create_iteration": 1
             }
         ]
         with open(self.test_file, 'w') as f:
@@ -55,8 +55,8 @@ class TestChecklist(unittest.TestCase):
         self.assertEqual(item["description"], ["Test description"])
         self.assertEqual(item["points"], 5)
         self.assertEqual(item["completed"], False)
-        self.assertEqual(item["created_by"], "creator")
-        self.assertEqual(item["created_at"], 1)
+        self.assertEqual(item["create_role"], "creator")
+        self.assertEqual(item["create_iteration"], 1)
 
     def test_add_multiple_items(self):
         """Test adding multiple items to the checklist."""
@@ -309,8 +309,8 @@ class TestChecklistFactory(unittest.TestCase):
                 "description": ["Existing description"],
                 "points": 5,
                 "completed": False,
-                "created_by": "tester",
-                "created_at": 1
+                "create_role": "tester",
+                "create_iteration": 1
             }
         ]
         with open(test_file, 'w') as f:

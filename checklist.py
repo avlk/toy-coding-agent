@@ -5,7 +5,7 @@
 # - description: is a string that describes the item.
 # - points: the number of points that the item is worth, between 0 (absolutely optional) and 9 (critical).
 # - completed: is a boolean that indicates whether the item is completed or not.
-# - created_by: indicates an entity that created the item.
+# - create_role: indicates an entity that created the item.
 # - created_at: execution round the item was created.
 
 # A checklist item is a dictionary with the aforementioned attributes. A checklist is an ordered list of checklist items.
@@ -28,23 +28,29 @@ class Checklist:
         except FileNotFoundError:
             self.items: List[Dict[str, Any]] = []
 
-    def add_item(self, item_id: str, title: str, description: Union[str, List[str]], points: int, created_by: str, created_at: int):
+    def add_item(self, item_id: str, title: str, description: Union[str, List[str]], points: int, create_role: str, create_iteration: int):
+        # Check if item with the same ID already exists       
+        for item in self.items:
+            if item["id"] == item_id:
+                return False
         item = {
             "id": item_id,
             "title": title,
             "description": to_lines(description),
             "points": points,
             "completed": False,
-            "created_by": created_by,
-            "created_at": created_at
+            "create_role": create_role,
+            "create_iteration": create_iteration
         }
         self.items.append(item)
-
+        return True
+    
     def complete_item(self, item_id: str):
         for item in self.items:
             if item["id"] == item_id:
                 item["completed"] = True
-                break
+                return True
+        return False
 
     def edit_item(self, item_id: str, title: str = None, description: Union[str, List[str], None] = None, points: int = None, completed: bool = None):
         for item in self.items:
@@ -57,7 +63,8 @@ class Checklist:
                     item["points"] = points
                 if completed is not None:
                     item["completed"] = completed
-                break
+                return True
+        return False
 
     def save(self):
         with open(self.filename, 'w') as f:
@@ -110,3 +117,11 @@ class ChecklistFactory:
     def save_all(self):
         for checklist in self.checklists.values():
             checklist.save()
+
+
+if __name__ == "__main__":
+    checklist = Checklist("test_checklist.json")
+    checklist.add_item(item_id="1", title="fix _parse_function_decl", description="_parse_function_decl in Parser is likely wrong, check it out and fix the implementation", points=8, create_role="reviewer", create_iteration=1)
+    checklist.add_item(item_id="2", title="implement _execute_statement", description=[" _execute_statement in Executor lacks implementation", "you have to properly implement it"], points=8, create_role="reviwer", create_iteration=1)
+    checklist.add_item(item_id="3", title="tests for for loops", description="there are no tests for \"for\" loops, you have to implement enough tests to cover \"for\" loop main use case and corner cases", points=6, create_role="reviwer", create_iteration=1)
+    checklist.save()
