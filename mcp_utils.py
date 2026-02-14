@@ -29,6 +29,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple, Any
 from fastmcp.exceptions import ToolError
+from checklist import ChecklistFactory
 from patch import pattern_replace, multiline_replace, fuzzy_multiline_replace
 
 # Set up logger for this module
@@ -97,6 +98,11 @@ class ProjectFolder:
         
         self.exclude_patterns = exclude_patterns if exclude_patterns is not None else self.DEFAULT_EXCLUDE_PATTERNS
         self._metadata_cache = {}
+
+        # Checklist parameters
+        self.current_iteration = 1
+        self.current_role = "agent"
+        self.checklist_factory = ChecklistFactory(self.checklists_path)
     
     def _validate_code_path(self, file_path: Union[str, Path]) -> Path:
         """
@@ -1231,3 +1237,50 @@ class ProjectFolder:
         except Exception as e:
             logger.error(f"Failed to restore snapshot {snapshot_id}: {str(e)}")
             return False
+
+    # Operations with checklists
+    
+    # List available checklists
+    def list_checklists(self) -> List[str]:
+        return self.checklist_factory.list_checklists()
+
+    # Read checklist items, with optional filtering by completion status
+    def read_checklist_items(self, checklist_name: str, completed: bool = None) -> Dict[str, Any]:
+        return {"items": self.checklist_factory.get_checklist(checklist_name).get_items(completed=completed),
+                "current_role": self.current_role,
+                "current_iteration": self.current_iteration
+        }
+    
+    # Add a checklist item with metadata about the creator and creation iteration
+    def add_checklist_item(self, checklist_name: str, id: str, title: str, description: Union[str, List[str]], points: int):
+        checklist = self.checklist_factory.get_checklist(checklist_name)
+        create_iteration = self.current_iteration
+        create_role = self.current_role
+        if not checklist.add_item(id, title, description, points, create_role, create_iteration):
+            raise ProjectFolderError(f"Checklist item with ID '{id}' already exists in checklist '{checklist_name}'")
+        checklist.save()
+    
+    # Mark a checklist item as completed
+    def complete_checklist_item(self, checklist_name: str, item_id: str):
+        checklist = self.checklist_factory.get_checklist(checklist_name)
+        if not checklist.complete_item(item_id):
+            raise ProjectFolderError(f"Checklist item with ID '{item_id}' not found in checklist '{checklist_name}'")
+        checklist.save()
+
+    # Edit a checklist item with optional parameters, allowing to update title, description, points, and completion status
+    def edit_checklist_item(self, checklist_name: str, item_id: str, title: str = None, description: Union[str, List[str], None] = None, points: int = None, completed: bool = None):
+        checklist = self.checklist_factory.get_checklist(checklist_name)
+        if not checklist.edit_item(item_id, title, description, points, completed):
+            raise ProjectFolderError(f"Checklist item with ID '{item_id}' not found in checklist '{checklist_name}'")
+        checklist.save()
+    
+    # Delete a checklist entirely
+    def delete_checklist(self, checklist_name: str):
+        self.checklist_factory.delete_checklist(checklist_name)
+
+    # Service function to set the current actor name and iteration number, 
+    # which will be used in checklist items metadata
+    def set_iteration_info(self, current_iteration: int, current_role: str):
+        self.current_iteration = current_iteration
+        self.current_role = current_role
+    

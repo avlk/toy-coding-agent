@@ -20,13 +20,14 @@ Author: Andrey Volkov
 Date: December 28, 2025
 """
 
+from ast import List
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from mcp_utils import ProjectFolder, ProjectFolderError
 from patch import patch_project, is_unified_diff
 from sandbox_execution import execute_sandboxed
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union, List
 import json
 import logging
 
@@ -793,7 +794,175 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             return result
         except Exception as e:
             raise ToolError(f"Execution failed: {str(e)}")
+        
+    @mcp.tool()
+    def _set_iteration_info(current_iteration: int, current_role: str) -> bool:
+        """ Internal tool to set iteration info for the project folder (not exposed to agents) """
+        pf.set_iteration_info(current_iteration, current_role)
+        return True
     
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def list_checklists() -> dict:
+        """ List all checklists in the project folder with their metadata. 
+            Returns: 
+                Dictionary with:
+                - checklists: List of string names of the checklists available in the project.
+                - success: Operation success status (always True unless error)
+                - error: Error message (only present if success=False)
+        """
+        try:
+            checklists = pf.list_checklists()
+            return {
+                'success': True,
+                'checklists': checklists
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+        
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def load_checklist(checklist_name: str, completed: Optional[bool] = None) -> dict:
+        """ 
+            Reads a checklist by name and return its contents. 
+        
+        Args:
+            checklist_name: Name of the checklist to load (use list_checklists to check out what is available)
+                            Example: "implementation_steps", "fixes", "todo"
+            completed: If True, only return completed items. If False, only return incomplete items. If None (default), return all items.
+
+        Returns:
+            Dictionary with:
+            - success: Operation success status
+            - items: List of items in the checklist (only present if success=True)
+            - current_role: The role you are currently playing (only present if success=True)
+            - current_iteration: The current iteration number (only present if success=True)
+            - error: Error message (only present if success=False)
+        """
+        try:
+            result = pf.read_checklist_items(checklist_name, completed=completed)
+            result['success'] = True
+            return result
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    @mcp.tool(annotations={"destructiveHint": True})
+    def delete_checklist(checklist_name: str) -> dict:
+        """ 
+            Deletes a checklist by name. Use with caution - this operation cannot be undone! 
+        
+        Args:
+            checklist_name: Name of the checklist to delete (use list_checklists to check out what is available)
+
+        Returns:
+            Dictionary with:
+            - success: Operation success status
+            - message: Description of the result (only present if success=True)
+            - error: Error message (only present if success=False)
+        """
+        try:
+            pf.delete_checklist(checklist_name)
+            return {
+                'success': True,
+                'message': f"Checklist '{checklist_name}' deleted successfully"
+            }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    @mcp.tool()
+    def add_checklist_item(checklist_name: str, id: str, title: str, description: Union[str, List[str]], points: int) -> dict:
+        """ 
+            Adds an item to a checklist. If the checklist does not exist, it will be created. 
+            The item consists of an ID (arbitrary string), a title, a description (string or list of strings), and a point value (integer).
+            
+        Args:
+            checklist_name: Name of the checklist to add an item to (use list_checklists to check out what is available)
+            id: Unique identifier for the checklist item (arbitrary string, e.g., "step1", "fix1", etc.)
+            title: A short description of the checklist item (string)
+            description: Long description, rationale, actionable items, even code snippets go here.
+                        It can be a string or a list of strings for multiline description.
+            points: The number of points that the item is worth, between 0 (absolutely optional) and 9 (critical). 
+                    Consider points as a way to communicate the importance of the item and help prioritize it in the checklist.
+        Returns:
+            Dictionary with:
+            - success: Operation success status
+            - message: Description of the result (only present if success=True)
+            - error: Error message (only present if success=False)
+        """
+        try:
+            pf.add_checklist_item(checklist_name, id, title, description, points)
+            return {
+                'success': True,
+                'message': f"Item '{id}' added to checklist '{checklist_name}' successfully"
+            }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    @mcp.tool()
+    def complete_checklist_item(checklist_name: str, id: str) -> dict:
+        """ 
+            Marks a checklist item as completed by its ID. 
+        
+        Args:
+            checklist_name: Name of the checklist containing the item (use list_checklists to check out what is available)
+            id: Unique identifier of the checklist item to mark as completed (the same ID you used when creating the item with add_checklist_item)
+        Returns:
+            Dictionary with:
+            - success: Operation success status
+            - message: Description of the result (only present if success=True)
+            - error: Error message (only present if success=False)
+        """
+        try:
+            pf.complete_checklist_item(checklist_name, id)
+            return {
+                'success': True,
+                'message': f"Item '{id}' in checklist '{checklist_name}' marked as completed successfully"
+            }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    @mcp.tool()
+    def edit_checklist_item(checklist_name: str, id: str, title: Optional[str] = None, description: Optional[Union[str, List[str]]] = None, points: Optional[int] = None) -> dict:
+        """ 
+            Edits the properties of a checklist item by its ID. You can edit the title, description, and points of the item. 
+        
+        Args:
+            checklist_name: Name of the checklist containing the item (use list_checklists to check out what is available)
+            id: Unique identifier of the checklist item to edit (the same ID you used when creating the item with add_checklist_item)
+            title: New title for the checklist item (optional)
+            description: New description for the checklist item (optional). Can be a string or a list of strings for multiline description.
+            points: New point value for the checklist item (optional). Must be between 0 and 9.
+        Returns:
+            Dictionary with:
+            - success: Operation success status
+            - message: Description of the result (only present if success=True)
+            - error: Error message (only present if success=False)
+        """
+        try:
+            pf.edit_checklist_item(checklist_name, id, title, description, points)
+            return {
+                'success': True,
+                'message': f"Item '{id}' in checklist '{checklist_name}' edited successfully"
+            }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
     # Add a resource to expose project info
     @mcp.resource("project://info")
     def get_project_info() -> dict:

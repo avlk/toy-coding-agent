@@ -1,4 +1,5 @@
 from google.genai import types
+import mcp
 from subagent_google import SubAgentGoogle
 from google.adk.planners import PlanReActPlanner, BuiltInPlanner
 from mcp_instance import MCPInstance
@@ -24,7 +25,11 @@ def find_model_config(model_name: str) -> ModelConfig:
     raise ValueError(f"Model configuration for {model_name} not found")
 
 def create_subagent_coding(model_config: ModelConfig, mcp: MCPInstance, token_tracker: TokenUsageTracker, instruction, **kwargs) -> SubAgentGoogle:
-    
+    disable_tools = None
+    # disable_tools = ["remove_file", "replace_in_files", 
+    #                 "multiline_replace_in_file", "add_checklist_item", 
+    #                 "edit_checklist_item", "get_line_range", "delete_checklist"]
+    # disable_tools = ["remove_file", "add_checklist_item", "edit_checklist_item", "delete_checklist"]
     # planner=BuiltInPlanner(thinking_config=types.ThinkingConfig(thinking_budget=20000))
     # planner = PlanReActPlanner()
     planner=None
@@ -34,7 +39,7 @@ def create_subagent_coding(model_config: ModelConfig, mcp: MCPInstance, token_tr
         model=model_config.name, 
         token_tracker=token_tracker,
         system_instruction=instruction, 
-        mcp_toolset=mcp.get_toolset(),
+        mcp_toolset=mcp.get_toolset(blocked_tools=disable_tools),
         planner=planner, **kwargs
     )
     return subagent
@@ -55,7 +60,12 @@ def prepare_test_files(test_name: str):
     if os.path.exists(f"solutions/{test_name}"):
         shutil.rmtree(f"solutions/{test_name}/")
     shutil.copytree(f"test_sets/{test_name}/test", f"solutions/{test_name}/current/code")
+    # copy review checklist to solutions/{test_name}/current/checklists folder
+    os.makedirs(f"solutions/{test_name}/current/checklists", exist_ok=True)
+    shutil.copy(f"test_sets/{test_name}/review.json", f"solutions/{test_name}/current/checklists/review.json")
 
+
+    
 async def test_coding_agent(model_name: str, test_name: str, script_name: str, nrounds: int):
     # Filter out deprecation warnings from google-adk since they use their own deprecated APIs
     warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -88,6 +98,10 @@ async def test_coding_agent(model_name: str, test_name: str, script_name: str, n
             print("\n" + "="*80)
 
             prepare_test_files(test_name)
+
+            # Set iteration and agent role for checklist metadata
+            await mcp.execute_function_call('_set_iteration_info', current_iteration=2, current_role="coder")
+            # Prepare prompt
             parts = [("Use Case", use_case), ("Goals", goals), ("Review Feedback", feedback)]
             await subagent.query(query="Implement changes addressing feedback items.", parts=parts, stopword="###STOPWORD###", n_iterations=10)
 
