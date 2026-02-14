@@ -1,0 +1,36 @@
+[
+    {
+        "id": "1",
+        "title": "fix _parse_function_decl",
+        "description": [
+            "_parse_function_decl in Parser is likely wrong, check it out and fix the implementation"
+        ],
+        "points": 8,
+        "completed": false,
+        "create_role": "reviewer",
+        "create_iteration": 1
+    },
+    {
+        "id": "2",
+        "title": "implement _execute_statement",
+        "description": [
+            " _execute_statement in Executor lacks implementation",
+            "you have to properly implement it"
+        ],
+        "points": 8,
+        "completed": false,
+        "create_role": "reviwer",
+        "create_iteration": 1
+    },
+    {
+        "id": "3",
+        "title": "tests for for loops",
+        "description": [
+            "there are no tests for \"for\" loops, you have to implement enough tests to cover \"for\" loop main use case and corner cases"
+        ],
+        "points": 6,
+        "completed": false,
+        "create_role": "reviwer",
+        "create_iteration": 1
+    }
+]

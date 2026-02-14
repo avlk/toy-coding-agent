@@ -1,0 +1,21 @@
+It shall meet the following goals:
+
+- Implement a C-like language interpreter with distinct parser, type checker, and execution stages.
+- Ensure the interpreter correctly processes and executes programs using integers, booleans, strings, if-else, for/while loops, and functions.
+- Implement interpreter_main(str) to execute program code, handling multi-line input.
+- Enable command-line execution of programs from a file path argument.
+- Provide print(), read_int(), read_bool(), and read_str() for stdin/stdout operations.
+- Gracefully handle syntax errors (e.g., missing semicolons, unmatched delimiters) and runtime errors (e.g., division by zero, type mismatches, undefined variables).
+- Prioritize handling for malformed expressions, division by zero, type mismatches in operations, undefined variables/functions, and invalid input for read_int()/read_bool.
+- All other common syntax and runtime errors should be caught and reported with clear, descriptive messages.
+- Develop a TEST_PROGRAMS list covering all language features, including recursion, complex expressions, and error conditions.
+- Ensure TEST_PROGRAMS is concise (under 100 programs), combining tests where possible, and contains no comments or unnecessary text.
+- Implement a test runner that executes TEST_PROGRAMS, mocks inputs, compares outputs, and reports PASS/FAIL status with error messages.
+- The test runner must print the total number of tests and the count of passed tests at completion.
+- Embed a LANGUAGE_SPECIFICATION markdown string documenting the language syntax and features.
+- Implement command-line --syntax flag to print LANGUAGE_SPECIFICATION to stdout and exit.
+- Implement command-line --test flag to run all tests defined in TEST_PROGRAMS.
+- ASSUMPTION: The C-like language syntax will be a simplified subset, including standard arithmetic, logical, and comparison operators.
+- ASSUMPTION: interpreter_main(str) will return None or an equivalent void type, as its primary action is execution and printing.
+- ASSUMPTION: Error messages for syntax and runtime errors should be descriptive and include line/column information if possible.
+- ASSUMPTION: The TEST_PROGRAMS list will be provided as a Python list of dictionaries.
