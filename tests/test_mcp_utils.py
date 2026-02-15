@@ -914,10 +914,14 @@ class TestReplaceInFiles:
 
 
 class TestMultilineReplaceInFile:
-    """Tests for multiline_replace_in_file method."""
+    """Tests for multiline_replace_in_file method.
     
-    def test_multiline_replace_basic(self, project_folder):
-        """Test basic multiline replacement."""
+    Note: Detailed fuzzy matching logic is tested in test_fuzzy_multiline_replace.py.
+    These tests focus on the file I/O wrapper layer.
+    """
+    
+    def test_multiline_replace_integration(self, project_folder):
+        """Test basic integration of multiline replacement with file I/O."""
         project_folder.create_file("test.txt", "line1\nline2\nline3\nline4")
         
         result = project_folder.multiline_replace_in_file(
@@ -926,82 +930,19 @@ class TestMultilineReplaceInFile:
             ["replaced"]
         )
         
-        assert result == 1
+        assert result == 2  # Line number where match was found (1-indexed)
         
         content = project_folder.load_file("test.txt")
         assert content['content'] == ["line1", "replaced", "line4"]
     
-    def test_multiline_replace_multiple_matches(self, project_folder):
-        """Test multiline replacement with multiple matches."""
-        project_folder.create_file("test.txt", "a\nb\nc\na\nb\nc")
-        
-        result = project_folder.multiline_replace_in_file(
-            "test.txt",
-            ["a", "b"],
-            ["x"]
-        )
-        
-        assert result == 2
-        
-        content = project_folder.load_file("test.txt")
-        assert content['content'] == ["x", "c", "x", "c"]
-    
-    def test_multiline_replace_with_only_around_line(self, project_folder):
-        """Test multiline replacement with only_around_line parameter."""
-        project_folder.create_file("test.txt", "a\nb\nc\na\nb\nc\na\nb")
-        
-        # Matches at lines 1, 4, 7; closest to line 5 is line 4
-        result = project_folder.multiline_replace_in_file(
-            "test.txt",
-            ["a", "b"],
-            ["x"],
-            only_around_line=5
-        )
-        
-        assert result == 1
-        
-        content = project_folder.load_file("test.txt")
-        assert content['content'] == ["a", "b", "c", "x", "c", "a", "b"]
-    
-    def test_multiline_replace_no_matches(self, project_folder):
-        """Test multiline replacement when no matches found."""
-        project_folder.create_file("test.txt", "line1\nline2\nline3")
-        
-        result = project_folder.multiline_replace_in_file(
-            "test.txt",
-            ["line5", "line6"],
-            ["replaced"]
-        )
-        
-        assert result == 0
-        
-        # Verify file unchanged
-        content = project_folder.load_file("test.txt")
-        assert content['content'] == ["line1", "line2", "line3"]
-    
     def test_multiline_replace_file_not_found(self, project_folder):
-        """Test multiline replacement on non-existent file."""
+        """Test error handling for non-existent file."""
         with pytest.raises(ProjectFolderError, match="File not found"):
             project_folder.multiline_replace_in_file(
                 "nonexistent.txt",
                 ["a"],
                 ["b"]
             )
-    
-    def test_multiline_replace_expands_content(self, project_folder):
-        """Test multiline replacement that expands content."""
-        project_folder.create_file("test.txt", "line1\nline2\nline3")
-        
-        result = project_folder.multiline_replace_in_file(
-            "test.txt",
-            ["line2"],
-            ["new1", "new2", "new3"]
-        )
-        
-        assert result == 1
-        
-        content = project_folder.load_file("test.txt")
-        assert content['content'] == ["line1", "new1", "new2", "new3", "line3"]
     
     def test_multiline_replace_deletes_content(self, project_folder):
         """Test multiline replacement that deletes content."""
@@ -1013,23 +954,10 @@ class TestMultilineReplaceInFile:
             []
         )
         
-        assert result == 1
+        assert result == 2  # Line number where match was found
         
         content = project_folder.load_file("test.txt")
         assert content['content'] == ["line1", "line4"]
-    
-    def test_multiline_replace_exact_match_required(self, project_folder):
-        """Test that multiline replacement requires exact match."""
-        project_folder.create_file("test.txt", "line1\nline2 extra\nline3")
-        
-        result = project_folder.multiline_replace_in_file(
-            "test.txt",
-            ["line2", "line3"],
-            ["replaced"]
-        )
-        
-        # Should not match because "line2" != "line2 extra"
-        assert result == 0
 
 
 class TestSnapshotOperations:

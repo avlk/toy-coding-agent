@@ -492,69 +492,6 @@ def pattern_replace(code_lines: list[str], pattern: str, replacement: str, is_re
     return total_replacements
 
 
-def multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str], only_around_line: int | None = None) -> int:
-    """
-    Search for all occurrences of a sequence of strings and replace them.
-    
-    This function finds ALL matches first, then applies all replacements at once
-    to avoid recursive matching issues (e.g., searching for {b} and replacing 
-    with {a,b} would otherwise match infinitely).
-    
-    Args:
-        code_lines: List of code lines to modify (modified in place)
-        s_str: Sequence of strings to search for
-        r_str: Sequence of strings to replace with
-        only_around_line: If not None, only replace the match closest to this line number (0-based)
-    
-    Returns:
-        Number of replacement operations performed
-    """
-    if not s_str:
-        logger.warning("Empty search string provided")
-        return 0
-    
-    # Find all non-overlapping matches
-    matches = []
-    search_len = len(s_str)
-    i = 0
-    
-    while i <= len(code_lines) - search_len:
-        # Check if sequence matches at position i
-        match = True
-        for j in range(search_len):
-            if code_lines[i + j] != s_str[j]:
-                match = False
-                break
-        
-        if match:
-            matches.append(i)
-            logger.debug(f"Found match at line {i}")
-            # Skip past this match to avoid overlapping matches
-            i += search_len
-        else:
-            i += 1
-    
-    if not matches:
-        logger.info("No matches found")
-        return 0
-    
-    logger.info(f"Found {len(matches)} match(es)")
-    
-    # If only_around_line is specified, find the closest match
-    if only_around_line is not None:
-        closest_match = min(matches, key=lambda pos: abs(pos - only_around_line))
-        matches = [closest_match]
-        logger.info(f"Selected closest match at line {closest_match} (target line was {only_around_line})")
-    
-    # Apply all replacements in reverse order to maintain correct positions
-    # Going backwards means earlier replacements don't affect later positions
-    for match_pos in reversed(matches):
-        code_lines[match_pos:match_pos + search_len] = r_str
-    
-    logger.info(f"Applied {len(matches)} replacement(s)")
-    return len(matches)
-
-
 def spaceless_distance(a: str, b: str) -> int:
     """Calculate Levenshtein distance ignoring leading/trailing spaces and space number differences."""
     a_nospace = a.strip()
@@ -563,21 +500,23 @@ def spaceless_distance(a: str, b: str) -> int:
     b_nospace = re.sub(r'\s+', ' ', b_nospace)
     return Levenshtein.distance(a_nospace, b_nospace)
 
-def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str], start_range: range) -> int | None:
-    """
-    Find a close match for sequence of strings around specified position and replace them.
-    
-    This function finds a match to s_str close to around_line, then applies the replacement (r_str).
-    The match allows for some differences (fuzziness).
 
+def multiline_replace(code_lines: list[str], s_str: list[str], r_str: list[str], only_around_line: int | None = None) -> int | None:
+    """
+    Find a close match for a sequence of strings and replace it using fuzzy matching.
+    
+    This function searches for an approximate match to s_str using fuzzy matching
+    (tolerating small differences like spacing, typos) and replaces it with r_str.
+    
     Args:
         code_lines: List of code lines to modify (modified in place)
         s_str: Sequence of strings to do an approximate match for
         r_str: Sequence of strings to replace with
-        start_range: Range of line numbers to search for a match starting position
+        only_around_line: If provided, search around this line number (0-based).
+                         If None, search the entire file. Default: None
     
     Returns:
-        True matching line number where a replacement was made, None otherwise
+        Line number (0-based) where a replacement was made, or None if no match found
     """
     if not s_str:
         logger.warning("Empty search string provided")
@@ -585,18 +524,26 @@ def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list
     
     # Maximum summary Levenshtein distance error: 5 errors + 1 error per line in s_str
     MAX_DISTANCE = 5 + len(s_str)
-
-    # Starting line boundaries
+    
+    # Define search window
+    TOLERANCE = 5  # Lines to search around only_around_line
     search_len = len(s_str)
-
-    start_range = range(start_range[0], min(start_range[-1], len(code_lines) - search_len) + 1)
-
+    
+    if only_around_line is not None:
+        # Search around the specified line
+        start = max(0, only_around_line - TOLERANCE)
+        end = min(len(code_lines) - search_len, only_around_line + TOLERANCE)
+        start_range = range(start, end + 1)
+    else:
+        # Search the entire file
+        start_range = range(0, len(code_lines) - search_len + 1)
+    
     match_index = -1
     match_distance = MAX_DISTANCE + 1
-
-    # Find all non-overlapping matches
+    
+    # Find the best fuzzy match
     for i in start_range:
-        # Check if sequence matches at position i
+        # Calculate distance for this potential match
         distance = sum(spaceless_distance(code_lines[i + j], s_str[j]) for j in range(search_len))
         
         if distance <= MAX_DISTANCE:
@@ -610,9 +557,8 @@ def fuzzy_multiline_replace(code_lines: list[str], s_str: list[str], r_str: list
         return None
     
     logger.info(f"Found match at line {match_index} with distance {match_distance}")
-        
-    # Apply all replacements in reverse order to maintain correct positions
-    # Going backwards means earlier replacements don't affect later positions
+    
+    # Apply the replacement
     code_lines[match_index:match_index + search_len] = r_str
     
     logger.info(f"Applied 1 replacement at line {match_index}")

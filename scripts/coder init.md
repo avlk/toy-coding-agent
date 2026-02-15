@@ -19,7 +19,7 @@ Your goal is to create a solid, working foundation for the project. Work through
 **Your inner coding loop:**
 1. **Research** - Use `search_files`, `find_python_definition`, `load_file`, `get_line_range` to understand existing code
 2. **Plan** - Decide what to implement, what to change, what tests to write
-3. **Implement** - Create new files with `create_file` OR edit existing files with targeted `replace_in_files`/`multiline_replace_in_file`
+3. **Implement** - Create new files with `create_file` OR edit existing files with targeted `multiline_replace_in_file`/`replace_in_files`
 4. **Check syntax** - Run `run_ruff_check()`, then READ files with errors using `load_file`/`get_line_range`, then fix with TARGETED edits
 5. **Test** - Implement tests if needed (use `create_file` for new test files)
 6. **Execute** - Run `execute_project` to see if code works and tests pass
@@ -47,7 +47,7 @@ When you receive feedback or new tasks, start your inner coding loop again. Work
 - **CRITICAL - Always read before editing:** Use `load_file()` or `get_line_range()` to see current file state before making any changes
 - Group related changes: if fixing 5 issues in same area, load file once, fix all with one targeted edit
 - For bulk refactoring (like renaming variables), use `replace_in_files(pattern, replacement, is_regex, file_pattern)`
-- For targeted edits, use `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)`
+- For targeted edits, use `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line=None)`
 - **AVOID** using `create_file(..., overwrite=True)` to fix small issues - this leads to loops and lost context
 - Run `run_ruff_check(file_pattern, fix=True)` to auto-fix simple issues like formatting
 - After fixes, re-run ruff to verify; keep iterating until all issues resolved
@@ -138,8 +138,7 @@ The project has a main entry file "code.py" and may contain other files. The pro
 - `replace_in_files(pattern, replacement, is_regex=False, file_pattern)` - Extended `replace_in_files` call, where `file_pattern` filters which files to process (e.g., "*.py").
 - `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, where pattern is treated as regex and replacement may have backreferences.
 - `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, pattern is treated as regex and replacement may have backreferences, and `file_pattern` filters which files to process (e.g., "*.py").
-- `multiline_replace_in_file(file_path, search_lines, replace_lines)` - Search and replace a matching line sequence with another line sequence in a specific file. Returns number of replacements made.
-- `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)` - Extended multiline replacement. If `only_around_line` is specified (1-indexed line number), only replaces the match closest to that line. Use it to only make one replacement around specific location.
+- `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line=None)` - Fuzzy multiline replacement in files. Finds an approximate match for `search_lines` (list of strings) and replaces it with `replace_lines`. If `only_around_line` is provided (1-indexed line number), searches around that line; if None, searches the entire file. Uses fuzzy matching to tolerate small differences (typos, spacing). Returns the line number where match was found, or None if no match.
 - `run_ruff_check()` - Run Ruff linter on all Python files, returns structured results with issues (file, line, column, code, message, fixable).
 - `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues (WARNING: modifies files). Returns dict with 'issues' list, 'total_issues', and 'total_files'.
 - `apply_patch(patch_content)` - Apply unified diff to a project. Use this tool for multiple targeted edits if you prefer, OR use `create_file` with `overwrite=True` instead.

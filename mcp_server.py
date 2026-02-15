@@ -637,25 +637,49 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
         only_around_line: Optional[int] = None
     ) -> dict:
         """
-        Search and replace a multiline pattern in a specific file.
+        Search and replace a multiline pattern in a specific file using fuzzy matching.
         
-        Loads the file, performs multiline replacement, and saves it if any
-        replacements were made.
+        This tool finds an approximate match to the search pattern and replaces it.
+        Allows for small differences (typos, spacing, minor edits) between the search 
+        pattern and actual code.
+        
+        Fuzzy matching behavior:
+        - Tolerates minor whitespace differences
+        - Allows small typos and character differences
+        - Searches within a tolerance window when only_around_line is specified
         
         Args:
             file_path: Relative path to the file (relative to project folder)
-            search_lines: List of lines to search for (must match exactly)
-                         ⚠️ CRITICAL: Pass ["line1", "line2"], NOT "line1\nline2"
-                         Each line is a separate string in the list
+            search_lines: List of lines to search for (approximate match allowed)
             replace_lines: List of lines to replace with
-                          ⚠️ CRITICAL: Pass ["line1", "line2"], NOT "line1\nline2"
-                          Each line is a separate string in the list
-            only_around_line: If not None, only replace the match closest to this line number (1-indexed)
+                                                   
+            only_around_line: If provided, search around this line number (1-indexed).
+                             If None, search the entire file. Default: None
+        
+                             
+        Important: search_lines and replace_lines MUST be lists of strings, 
+                  where each string is a separate line.
+                         
+            ❌ WRONG - single string with newlines:
+                search_lines = "line1\\nline2\\nline3"  # This will NOT work!
+                replace_lines = "new1\\nnew2"  # This will NOT work!
+            
+            ✅ CORRECT - list of strings:
+                search_lines = ["line1", "line2", "line3"]  # Each line is separate
+                replace_lines = ["new1", "new2"]  # Each line is separate
+
+        Example usage:
+            multiline_replace_in_file(
+                file_path="code.py",
+                search_lines=["def old_name():", "    return True"],
+                replace_lines=["def new_name():", "    return False"],
+                only_around_line=25
+            )
         
         Returns:
             Dictionary with:
             - success: Operation success status
-            - replacements: Number of replacement operations performed
+            - matched_line: Line number where replacement was made (1-indexed, only present if success=True)
             - error: Error message (only present if success=False)
         """
         logger.info(f"multiline_replace_in_file(file_path={file_path!r}, search_lines={len(search_lines)} lines, replace_lines={len(replace_lines)} lines, only_around_line={only_around_line}) called")
@@ -665,77 +689,9 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
             logger.debug(f"search_lines[{i}] = {line!r}")
         
         try:
-            replacements = pf.multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)
-            if replacements == 0:
-                error_details = "No matches found. Check that search_lines is a list of exact lines to match. Do not format, adjust or escape them in any way."
-                
-                return {
-                    'success': False,
-                    'error': error_details,
-                    'replacements': replacements
-                }
-            else:
-                return {
-                    'success': True,
-                    'replacements': replacements
-                }
-        except ProjectFolderError as e:
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    # Expose fuzzy_replace_in_file as MCP tool
-    @mcp.tool(annotations={"destructiveHint": True})
-    def fuzzy_replace_in_file(
-        file_path: str,
-        search_lines: list[str],
-        replace_lines: list[str],
-        around_line: int
-    ) -> dict:
-        """
-        Search and replace a multiline pattern in a specific file using fuzzy matching.
-        
-        This tool finds the closest approximate match to the search pattern near the
-        specified line and replaces it. Allows for small differences (typos, spacing,
-        minor edits) between the search pattern and actual code.
-        
-        Use this when:
-        - The exact code structure is slightly different than expected
-        - There might be minor whitespace differences
-        - You want to replace code near a specific line even if not an exact match
-        
-        ⚠️ CRITICAL LIMITATIONS:
-        - Avoid calling this multiple times on the same file in one iteration
-        - After first replacement, around_line offsets change, causing subsequent calls to fail
-        - For multiple edits in same file: use multiline_replace_in_file or replace_in_files instead
-        
-        Args:
-            file_path: Relative path to the file (relative to project folder)
-            search_lines: List of lines to search for (approximate match allowed, small differences OK)
-                         ⚠️ CRITICAL: Pass ["line1", "line2"], NOT "line1\nline2"
-                         Each line is a separate string in the list
-            replace_lines: List of lines to replace with
-                          ⚠️ CRITICAL: Pass ["line1", "line2"], NOT "line1\nline2"
-                          Each line is a separate string in the list
-            around_line: Line number around which to search for the match (1-indexed, required)
-        
-        Returns:
-            Dictionary with:
-            - success: Operation success status
-            - matched_line: Actual line number where replacement was made (only present if success=True)
-            - error: Error message (only present if success=False)
-        """
-        logger.info(f"fuzzy_replace_in_file(file_path={file_path!r}, search_lines={len(search_lines)} lines, replace_lines={len(replace_lines)} lines, around_line={around_line}) called")
-        
-        # Log exact search strings for debugging
-        for i, line in enumerate(search_lines):
-            logger.debug(f"search_lines[{i}] = {line!r}")
-        
-        try:
-            message, matched_line = pf.fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)
+            matched_line = pf.multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)
             if matched_line is None:
-                error_details = message
+                error_details = "No matches found. The search pattern could not be matched even with fuzzy matching. Check that search_lines approximately matches the actual file content."
                 
                 return {
                     'success': False,
@@ -751,6 +707,7 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                 'success': False,
                 'error': str(e)
             }
+    
     
     # Expose execute_sandboxed as MCP tool
     @mcp.tool(annotations={"readOnlyHint": True})

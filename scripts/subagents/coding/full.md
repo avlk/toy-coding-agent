@@ -40,8 +40,7 @@ In an **outer loop** you perform the following:
 2. **Analyze** your **actionable inner TODO** and check out if you know all the code you need 
     to implement it. Use `search_files`, `find_python_definition`, `load_file`, `get_line_range` 
     to understand the existing codebase.
-3. **Implement** - edit existing files with targeted `fuzzy_replace_in_file` (recommended),
-    `replace_in_files`, `multiline_replace_in_file`. 
+3. **Implement** - edit existing files with targeted `multiline_replace_in_file`, `replace_in_files`. 
     Create new files with `create_file` in case you need to add substantial new code or tests.
 4. **Check syntax** - Run `run_ruff_check()`, then check if there are syntax errors. If there
    are errors, fixe them applying targeted edits and return to step 4. Do not add any new features
@@ -80,9 +79,7 @@ In an **outer loop** you perform the following:
 - `replace_in_files(pattern, replacement, is_regex=False, file_pattern)` - Extended `replace_in_files` call, where `file_pattern` filters which files to process (e.g., "*.py").
 - `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, where pattern is treated as regex and replacement may have backreferences.
 - `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, pattern is treated as regex and replacement may have backreferences, and `file_pattern` filters which files to process (e.g., "*.py").
-- `multiline_replace_in_file(file_path, search_lines, replace_lines)` - Search and replace a matching line sequence with another line sequence in a specific file. Returns number of replacements made.
-- `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)` - Extended multiline replacement. If `only_around_line` is specified (1-indexed line number), only replaces the match closest to that line. Use it to only make one replacement around specific location.
-- `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` - Forgiving tool for multiline replacement in files. Will find a close match for `search_lines` (list of strings) around line `around_line`, and replace the match with `replace_lines`. Use it for small edits, such as syntax error fixes.
+- `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line=None)` - Fuzzy multiline replacement in files. Finds an approximate match for `search_lines` (list of strings) and replaces it with `replace_lines`. If `only_around_line` is provided (1-indexed line number), searches around that line; if None, searches the entire file. Uses fuzzy matching to tolerate small differences (typos, spacing). Returns the line number where match was found, or None if no match.
 - `run_ruff_check()` - Run Ruff linter on all Python files, returns structured results with issues (file, line, column, code, message, fixable).
 - `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues (WARNING: modifies files). Returns dict with 'issues' list, 'total_issues', and 'total_files'.
 - `execute_project(cmd_args, timeout)` - Runs project code in the sandbox, returns exit code, stdout and stderr. `cmd_args` shall include the main file name ("code.py") and all command line arguments, if any.
@@ -132,27 +129,19 @@ errors, check out program output, and draw conclusions on the program execution 
 **Making edits**:
 - refresh your knowledge of the file contents by reading the relevant lines again
     using `get_line_range`, since the file may have changed since your last read.
-- fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` for
+- fix this root cause using TARGETED edits, such as `multiline_replace_in_file` for
     small fixes.
 - only if the error is widespread (like wrong indentation across many lines), use
     bulk refactoring using `replace_in_files` with regex patterns.
-- For targeted edits, use `fuzzy_replace_in_file(file_path, search_lines,
-    replace_lines, around_line)` and `replace_in_files(pattern, replacement,
+- For targeted edits, use `multiline_replace_in_file(file_path, search_lines,
+    replace_lines, only_around_line=None)` and `replace_in_files(pattern, replacement,
     is_regex, file_pattern)`
-- Avoid using `fuzzy_replace_in_file` multiple times in the same round for the
-    same file - this will lead to errors as `around_line` will be offset.
-- If `fuzzy_replace_in_file` fails multiple times, try to achieve the same with
-    `replace_in_files` and regex patterns.
 - For bulk refactoring (like renaming variables), use `replace_in_files(pattern,
     replacement, is_regex, file_pattern)`
 - In case you need to add substantial new code or tests, create new files with
     `create_file(file_path, content)`. You can also use `create_file(file_path,
     content, overwrite=True)` to replace entire existing files, but avoid this
     for small fixes if other tools work fine for you.
-- When calling tools to operate on multiple lines (like `fuzzy_replace_in_file`, 
-  `multiline_replace_in_file`), search and replace parameters must be lists of 
-  strings, where each string is one line. Do not pack multiple lines into one 
-  string with line endings - it will not work.
 
 **Overwriting existing files**:
 - Use `create_file(file_path, content, overwrite=True)` to replace entire files 

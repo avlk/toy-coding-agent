@@ -37,9 +37,7 @@ Your goal is to deliver solid, working code that satisfies all checklist require
 
 **Making edits:**
 - Refresh your knowledge of file contents by reading relevant files
-- Use TARGETED edits like `fuzzy_replace_in_file` for small fixes
-- Avoid using `fuzzy_replace_in_file` multiple times in the same round for the same file - `around_line` will be offset
-- ⚠️ **CRITICAL:** When calling multiline tools (`fuzzy_replace_in_file`), search and replace parameters must be lists of strings, where each string is one line. Do NOT pack multiple lines into one string with line endings - it will not work.
+- Use TARGETED edits like `multiline_replace_in_file` for small fixes
 
 ## Response Format
 

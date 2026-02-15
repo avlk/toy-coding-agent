@@ -30,7 +30,7 @@ def create_subagent_coding(model_config: ModelConfig, mcp: MCPInstance, token_tr
                    "load_file", "get_line_range",
                    "search_files", "find_python_definition", 
                    "execute_project", "run_ruff_check",
-                   "fuzzy_replace_in_file", "multiline_replace_in_file", "replace_in_files"
+                   "multiline_replace_in_file", "replace_in_files"
                    ]
     if checklist:
         allow_tools.extend(["list_checklists", "load_checklist", "complete_checklist_item"])

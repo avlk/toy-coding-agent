@@ -22,11 +22,10 @@ You have to use MCP tools to accomplish your task, but you have some important g
 2. Then implement the fixes one at a time. For each fix, do multiple iterations of the following steps until all errors are fixed:
     - MAKE SHURE you create a snapshot each iteration using `create_snapshot(label)` before making changes, so you can revert if needed.
     - refresh your knowledge of the file contents by reading the relevant lines again using `get_line_range`, since the file may have changed since your last read.
-    - fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` for small fixes.
+    - fix this root cause using TARGETED edits, such as `multiline_replace_in_file` for small fixes.
     - only if the error is widespread (like wrong indentation across many lines), use bulk refactoring using `replace_in_files` with regex patterns. 
-    - For targeted edits, use `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` and `replace_in_files(pattern, replacement, is_regex, file_pattern)`
-    - Avoid using `fuzzy_replace_in_file` multiple times in the same round for the same file - this will lead to errors as `around_line` will be offset.
-    - If `fuzzy_replace_in_file` fails multiple times, try to achieve the same with `replace_in_files` and regex patterns.
+    - For targeted edits, use `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line)` which uses fuzzy matching to find approximate matches
+    - The `only_around_line` parameter is optional - omit it to search the entire file, or provide a line number to search around that location
     - For bulk refactoring (like renaming variables), use `replace_in_files(pattern, replacement, is_regex, file_pattern)`
     - After making edits, use `run_ruff_check()` again to verify fixes.
     - When you call `run_ruff_check()`, check the response. If it contains 'success': True, this means there are no errors.
@@ -44,7 +43,7 @@ Your tools:
 - `replace_in_files(pattern, replacement, is_regex=False, file_pattern)` - Extended `replace_in_files` call, where `file_pattern` filters which files to process (e.g., "*.py").
 - `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, where pattern is treated as regex and replacement may have backreferences.
 - `replace_in_files(pattern, replacement, is_regex=True)` - Extended `replace_in_files` call, pattern is treated as regex and replacement may have backreferences, and `file_pattern` filters which files to process (e.g., "*.py").
-- `fuzzy_replace_in_file(file_path, search_lines, replace_lines, around_line)` - Forgiving tool for multiline replacement in files. Will find a close match for `search_lines` (list of strings) around line `around_line`, and replace the match with `replace_lines`. Use it for small edits, such as syntax error fixes.
+- `multiline_replace_in_file(file_path, search_lines, replace_lines, only_around_line=None)` - Fuzzy multiline replacement in files. Finds an approximate match for `search_lines` (list of strings) and replaces it with `replace_lines`. If `only_around_line` is provided, searches around that line number (1-indexed); if None, searches the entire file. Uses fuzzy matching to tolerate small differences (typos, spacing). Returns the line number where match was found, or None if no match.
 - `run_ruff_check(file_pattern, fix)` - Extended Ruff check. `file_pattern` filters files to check (default: "**/*.py"). If `fix=True`, automatically fixes fixable issues. If it returns that the error is Unfixable, it does not mean it is unfixable by you, it is not fixable by ruff itself. Returns dict with 'success' status, and if 'success' is false, 'error' message, and 'issues' list.
 - `create_snapshot(label)` - Create a snapshot of the current project state with an optional label. Returns snapshot ID.
 - `list_snapshots()` - List all created snapshots with their IDs, timestamps, and labels.
@@ -66,7 +65,7 @@ allowed_tools = [
         "search_files",
         "find_python_definition",
         "replace_in_files",
-        "fuzzy_replace_in_file",
+        "multiline_replace_in_file",
         "run_ruff_check",
         "create_snapshot",
         "list_snapshots",

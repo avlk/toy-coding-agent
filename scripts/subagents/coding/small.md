@@ -66,27 +66,19 @@ errors, check out program output, and draw conclusions on the program execution 
 **Making edits**:
 - refresh your knowledge of the file contents by reading the relevant lines again
     using `get_line_range`, since the file may have changed since your last read.
-- fix this root cause using TARGETED edits, such as `fuzzy_replace_in_file` for
+- fix this root cause using TARGETED edits, such as `multiline_replace_in_file` for
     small fixes.
 - only if the error is widespread (like wrong indentation across many lines), use
     bulk refactoring using `replace_in_files` with regex patterns.
-- For targeted edits, use `fuzzy_replace_in_file(file_path, search_lines,
-    replace_lines, around_line)` and `replace_in_files(pattern, replacement,
+- For targeted edits, use `multiline_replace_in_file(file_path, search_lines,
+    replace_lines, only_around_line=None)` and `replace_in_files(pattern, replacement,
     is_regex, file_pattern)`
-- Avoid using `fuzzy_replace_in_file` multiple times in the same round for the
-    same file - this will lead to errors as `around_line` will be offset.
-- If `fuzzy_replace_in_file` fails multiple times, try to achieve the same with
-    `replace_in_files` and regex patterns.
 - For bulk refactoring (like renaming variables), use `replace_in_files(pattern,
     replacement, is_regex, file_pattern)`
 - In case you need to add substantial new code or tests, create new files with
     `create_file(file_path, content)`. You can also use `create_file(file_path,
     content, overwrite=True)` to replace entire existing files, but avoid this
     for small fixes if other tools work fine for you.
-- When calling tools to operate on multiple lines (like `fuzzy_replace_in_file`, 
-  `multiline_replace_in_file`), search and replace parameters must be lists of 
-  strings, where each string is one line. Do not pack multiple lines into one 
-  string with line endings - it will not work.
 
 **Overwriting existing files**:
 - Use `create_file(file_path, content, overwrite=True)` to replace entire files 

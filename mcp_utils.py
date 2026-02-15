@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple, Any
 from fastmcp.exceptions import ToolError
 from checklist import ChecklistFactory
-from patch import pattern_replace, multiline_replace, fuzzy_multiline_replace
+from patch import pattern_replace, multiline_replace
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
@@ -716,21 +716,22 @@ class ProjectFolder:
         search_lines: List[str],
         replace_lines: List[str],
         only_around_line: Optional[int] = None
-    ) -> int:
+    ) -> Optional[int]:
         """
-        Search and replace a multiline pattern in a specific file.
+        Search and replace a multiline pattern in a specific file using fuzzy matching.
         
-        Loads the file, performs multiline replacement, and saves it if any
-        replacements were made.
+        This method finds an approximate match to the search pattern and replaces it.
+        Allows for small differences (typos, spacing) between the search pattern and actual code.
         
         Args:
             file_path: Relative path to the file (relative to project folder)
-            search_lines: List of lines to search for (must match exactly)
+            search_lines: List of lines to search for (approximate match allowed)
             replace_lines: List of lines to replace with
-            only_around_line: If not None, only replace the match closest to this line number (1-indexed)
+            only_around_line: If provided, search around this line number (1-indexed).
+                             If None, search the entire file. Default: None
             
         Returns:
-            Number of replacement operations performed
+            Line number (1-indexed) where replacement was made, or None if no match found
             
         Raises:
             ProjectFolderError: If file not found or operation fails
@@ -755,81 +756,8 @@ class ProjectFolder:
             # Convert 1-indexed to 0-indexed for only_around_line
             around_line_0based = only_around_line - 1 if only_around_line is not None else None
             
-            # Perform replacement
-            num_replacements = multiline_replace(code_lines, search_lines, replace_lines, around_line_0based)
-            
-            # Save if replacements were made
-            if num_replacements > 0:
-                with open(full_path, 'w', encoding='utf-8') as f:
-                    f.write('\n'.join(code_lines))
-                
-                # Clear cache for this file
-                self._clear_metadata_cache(full_path)
-                
-                rel_path = str(full_path.relative_to(self.code_path))
-                logger.info(f"multiline_replace_in_file({rel_path}): {num_replacements} replacement(s)")
-            
-            return num_replacements
-        
-        except UnicodeDecodeError:
-            raise ProjectFolderError(f"File is not a text file: {file_path}")
-        except ProjectFolderError:
-            raise
-        except PermissionError:
-            raise ProjectFolderError(f"Permission denied: {file_path}")
-        except Exception as e:
-            raise ProjectFolderError(f"Multiline replace failed: {str(e)}")
-
-    def fuzzy_replace_in_file(
-        self,
-        file_path: str,
-        search_lines: List[str],
-        replace_lines: List[str],
-        around_line: int
-    ) -> Tuple[str, Optional[int]]:
-        """
-        Search and replace a multiline pattern in a specific file using fuzzy matching.
-        
-        This method finds the closest approximate match to the search pattern near the
-        specified line and replaces it. Allows for small differences (typos, spacing)
-        between the search pattern and actual code.
-        
-        Args:
-            file_path: Relative path to the file (relative to project folder)
-            search_lines: List of lines to search for (approximate match allowed)
-            replace_lines: List of lines to replace with
-            around_line: Line number around which to search (1-indexed, required)
-            
-        Returns:
-            Actual line number (1-indexed) where replacement was made, or None if no match found
-            
-        Raises:
-            ProjectFolderError: If file not found or operation fails
-        """
-        try:
-            full_path = self._validate_code_path(file_path)
-            
-            if not full_path.exists():
-                raise ProjectFolderError(f"File not found: {file_path}")
-            
-            if not full_path.is_file():
-                raise ProjectFolderError(f"Path is not a file: {file_path}")
-            
-            # Check if file should be excluded
-            if self._is_excluded(full_path):
-                raise ProjectFolderError(f"File matches exclude patterns: {file_path}")
-            
-            # Load file
-            with open(full_path, 'r', encoding='utf-8') as f:
-                code_lines = [line.rstrip('\n\r') for line in f]
-            
-            # Convert 1-indexed to 0-indexed for around_line
-            around_line -= 1
-            line_tolerance = 10
-            start_range = range(max(0, around_line - line_tolerance), min(len(code_lines), around_line + line_tolerance + 1))
-
             # Perform fuzzy replacement
-            matched_line = fuzzy_multiline_replace(code_lines, search_lines, replace_lines, start_range=start_range)
+            matched_line = multiline_replace(code_lines, search_lines, replace_lines, around_line_0based)
             
             # Save if replacement was made
             if matched_line is not None:
@@ -840,17 +768,12 @@ class ProjectFolder:
                 self._clear_metadata_cache(full_path)
                 
                 rel_path = str(full_path.relative_to(self.code_path))
-                logger.info(f"fuzzy_replace_in_file({rel_path}): replacement at line {matched_line + 1}")
+                logger.info(f"multiline_replace_in_file({rel_path}): replacement at line {matched_line + 1}")
                 
-                return "Replace successful", matched_line + 1
+                return matched_line + 1  # Convert back to 1-indexed
             
-            # if no match was found, try to match wider and return a matching line if found
-            matched_line = fuzzy_multiline_replace(code_lines, search_lines, replace_lines, start_range=range(0, len(code_lines)))
-            if matched_line is not None:
-                return f"Could not find close match around line {around_line + 1}, but there is a match for this search pattern at line {matched_line + 1}. Try adjusting the around_line parameter.", None
-            else:
-                return "No matching pattern found in the whole file. I tried to find the pattern in the whole file, and it wasn't found. ", None
-            
+            return None
+        
         except UnicodeDecodeError:
             raise ProjectFolderError(f"File is not a text file: {file_path}")
         except ProjectFolderError:
@@ -858,7 +781,7 @@ class ProjectFolder:
         except PermissionError:
             raise ProjectFolderError(f"Permission denied: {file_path}")
         except Exception as e:
-            raise ProjectFolderError(f"Fuzzy replace failed: {str(e)}")
+            raise ProjectFolderError(f"Multiline replace failed: {str(e)}")
 
     def run_ruff_check(
         self,

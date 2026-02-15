@@ -23,11 +23,8 @@ until you have substantial, functional code.
 
 **Making edits:**
 - Refresh your knowledge of file contents by reading relevant lines with `get_line_range` before editing
-- Use TARGETED edits like `fuzzy_replace_in_file` for small fixes
+- Use TARGETED edits like `multiline_replace_in_file` for small fixes
 - For widespread errors (like wrong indentation across many lines), use `replace_in_files` with regex patterns
-- Avoid using `fuzzy_replace_in_file` multiple times in the same round for the same file - `around_line` will be offset
-- If `fuzzy_replace_in_file` fails multiple times, try `replace_in_files` with regex patterns instead
-- ⚠️ **CRITICAL:** When calling multiline tools (`fuzzy_replace_in_file`, `multiline_replace_in_file`), search and replace parameters must be lists of strings, where each string is one line. Do NOT pack multiple lines into one string with line endings - it will not work.
 
 ## Response Format
 
