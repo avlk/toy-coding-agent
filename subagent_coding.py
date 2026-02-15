@@ -24,22 +24,31 @@ def find_model_config(model_name: str) -> ModelConfig:
             return config
     raise ValueError(f"Model configuration for {model_name} not found")
 
-def create_subagent_coding(model_config: ModelConfig, mcp: MCPInstance, token_tracker: TokenUsageTracker, instruction, **kwargs) -> SubAgentGoogle:
-    disable_tools = None
-    # disable_tools = ["remove_file", "replace_in_files", 
-    #                 "multiline_replace_in_file", "add_checklist_item", 
-    #                 "edit_checklist_item", "get_line_range", "delete_checklist"]
-    # disable_tools = ["remove_file", "add_checklist_item", "edit_checklist_item", "delete_checklist"]
+def create_subagent_coding(model_config: ModelConfig, mcp: MCPInstance, token_tracker: TokenUsageTracker, instruction, checklist: bool, **kwargs) -> SubAgentGoogle:
+    allow_tools = ["create_snapshot", "restore_snapshot",
+                   "list_files", "create_file", "remove_file",
+                   "load_file", "get_line_range",
+                   "search_files", "find_python_definition", 
+                   "execute_project", "run_ruff_check",
+                   "fuzzy_replace_in_file", "multiline_replace_in_file", "replace_in_files"
+                   ]
+    if checklist:
+        allow_tools.extend(["list_checklists", "load_checklist", "complete_checklist_item"])
+
+    agent_name = "coding_subagent"
+    if checklist:
+        agent_name = "coding_subagent_cl"
+
     # planner=BuiltInPlanner(thinking_config=types.ThinkingConfig(thinking_budget=20000))
     # planner = PlanReActPlanner()
     planner=None
     # To use GoogleAIAgent: uncomment import above and this will automatically use SubAgentGoogle
     subagent = SubAgentGoogle(
-        name="coding_subagent",
+        name=agent_name,
         model=model_config.name, 
         token_tracker=token_tracker,
         system_instruction=instruction, 
-        mcp_toolset=mcp.get_toolset(blocked_tools=disable_tools),
+        mcp_toolset=mcp.get_toolset(allowed_tools=allow_tools),
         planner=planner, **kwargs
     )
     return subagent
@@ -66,12 +75,15 @@ def prepare_test_files(test_name: str):
 
 
     
-async def test_coding_agent(model_name: str, test_name: str, script_name: str, nrounds: int):
+async def test_coding_agent(model_name: str, test_name: str, script_name: str, checklist: bool, nrounds: int):
     # Filter out deprecation warnings from google-adk since they use their own deprecated APIs
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     warnings.filterwarnings("ignore", category=UserWarning)
 
-    system_instruction = load_file(f"scripts/subagents/coding/{script_name}.md")
+    if checklist:
+        system_instruction = load_file(f"scripts/subagents/coding-checklist/{script_name}.md")
+    else:
+        system_instruction = load_file(f"scripts/subagents/coding/{script_name}.md")
     use_case = load_file(f"test_sets/{test_name}/use case.md")
     goals = load_file(f"test_sets/{test_name}/goals.md")
     feedback = load_file(f"test_sets/{test_name}/iteration goal.md")
@@ -88,7 +100,7 @@ async def test_coding_agent(model_name: str, test_name: str, script_name: str, n
     success_rounds = []
 
     try:
-        subagent = create_subagent_coding(model_config, mcp, token_tracker, system_instruction, rate_limiter=request_throttler)
+        subagent = create_subagent_coding(model_config, mcp, token_tracker, system_instruction, checklist, rate_limiter=request_throttler)
         subagent.set_debug(True)
         subagent.set_progress_indication(False)
 
@@ -133,6 +145,7 @@ if __name__ == "__main__":
     parser.add_argument("--test", help="Test set", type=str, default="test_coding_agent")
     parser.add_argument("--script", help="System instruction variant", type=str, default="full")
     parser.add_argument("--rounds", type=int, default=1, help="Number of coding rounds to execute (default: 1)")
+    parser.add_argument("--checklist", action="store_true", help="Enable checklists for subagent")
     args = parser.parse_args()
 
     try:
@@ -140,7 +153,7 @@ if __name__ == "__main__":
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-        loop.run_until_complete(test_coding_agent(args.model, args.test, args.script, args.rounds))
+        loop.run_until_complete(test_coding_agent(args.model, args.test, args.script, args.checklist, args.rounds))
     finally:
         # Cleanup pending tasks before closing loop
         try:
