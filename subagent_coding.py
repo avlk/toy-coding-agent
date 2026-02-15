@@ -25,7 +25,7 @@ def find_model_config(model_name: str) -> ModelConfig:
     raise ValueError(f"Model configuration for {model_name} not found")
 
 def create_subagent_coding(model_config: ModelConfig, mcp: MCPInstance, token_tracker: TokenUsageTracker, instruction, checklist: bool, **kwargs) -> SubAgentGoogle:
-    allow_tools = ["create_snapshot", "restore_snapshot",
+    allow_tools = ["create_snapshot", "restore_snapshot", "list_snapshots",
                    "list_files", "create_file", "remove_file",
                    "load_file", "get_line_range",
                    "search_files", "find_python_definition", 
@@ -33,7 +33,7 @@ def create_subagent_coding(model_config: ModelConfig, mcp: MCPInstance, token_tr
                    "multiline_replace_in_file", "replace_in_files"
                    ]
     if checklist:
-        allow_tools.extend(["list_checklists", "load_checklist", "complete_checklist_item"])
+        allow_tools.extend(["checklist_read", "checklist_complete"])
 
     agent_name = "coding_subagent"
     if checklist:
@@ -113,6 +113,7 @@ async def test_coding_agent(model_name: str, test_name: str, script_name: str, c
 
             # Set iteration and agent role for checklist metadata
             await mcp.execute_function_call('_set_iteration_info', current_iteration=2, current_role="coder")
+            await mcp.execute_function_call('_set_actionable_checklist', checklist_name="review")
             # Prepare prompt
             parts = [("Use Case", use_case), ("Goals", goals), ("Review Feedback", feedback)]
             await subagent.query(query="Implement changes addressing feedback items.", parts=parts, stopword="###STOPWORD###", n_iterations=10)

@@ -920,6 +920,104 @@ def create_file_ops_server(project_path: str, server_name: str = "file-operation
                 'error': str(e)
             }
 
+    # Simplified checklist commands for working with a single actionable checklist
+    
+    @mcp.tool()
+    def _set_actionable_checklist(checklist_name: str) -> dict:
+        """ 
+            Sets the actionable checklist - the default checklist used by simplified commands
+            (checklist_read and checklist_complete).
+        
+        Args:
+            checklist_name: Name of the checklist to set as actionable (use list_checklists to see available)
+
+        Returns:
+            Dictionary with:
+            - success: Operation success status
+            - message: Description of the result (only present if success=True)
+            - error: Error message (only present if success=False)
+        """
+        try:
+            pf._set_actionable_checklist(checklist_name)
+            return {
+                'success': True,
+                'message': f"Actionable checklist set to '{checklist_name}'"
+            }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def checklist_read(completed: Optional[bool] = None) -> dict:
+        """ 
+            Reads the actionable checklist and returns its contents. 
+            This is a simplified version of load_checklist that works with the checklist
+            set by _set_actionable_checklist.
+        
+        Args:
+            completed: If True, only return completed items. If False, only return incomplete items. 
+                      If None (default), return all items.
+
+        Returns:
+            Dictionary with:
+            - success: Operation success status
+            - items: List of items in the checklist (only present if success=True)
+            - current_role: The role you are currently playing (only present if success=True)
+            - current_iteration: The current iteration number (only present if success=True)
+            - error: Error message (only present if success=False)
+        """
+        try:
+            if pf.actionable_checklist_name is None:
+                return {
+                    'success': False,
+                    'error': 'No actionable checklist set. Use _set_actionable_checklist first.'
+                }
+            
+            result = pf.read_checklist_items(pf.actionable_checklist_name, completed=completed)
+            result['success'] = True
+            return result
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    @mcp.tool()
+    def checklist_complete(id: str) -> dict:
+        """ 
+            Marks a checklist item as completed in the actionable checklist.
+            This is a simplified version of complete_checklist_item that works with the checklist
+            set by _set_actionable_checklist.
+        
+        Args:
+            id: Unique identifier of the checklist item to mark as completed
+
+        Returns:
+            Dictionary with:
+            - success: Operation success status
+            - message: Description of the result (only present if success=True)
+            - error: Error message (only present if success=False)
+        """
+        try:
+            if pf.actionable_checklist_name is None:
+                return {
+                    'success': False,
+                    'error': 'No actionable checklist set. Use _set_actionable_checklist first.'
+                }
+            
+            pf.complete_checklist_item(pf.actionable_checklist_name, id)
+            return {
+                'success': True,
+                'message': f"Item '{id}' marked as completed successfully"
+            }
+        except ProjectFolderError as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
     # Add a resource to expose project info
     @mcp.resource("project://info")
     def get_project_info() -> dict:

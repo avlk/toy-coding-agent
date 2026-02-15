@@ -103,6 +103,7 @@ class ProjectFolder:
         self.current_iteration = 1
         self.current_role = "agent"
         self.checklist_factory = ChecklistFactory(self.checklists_path)
+        self.actionable_checklist_name: Optional[str] = None  # The default checklist for simplified commands
     
     def _validate_code_path(self, file_path: Union[str, Path]) -> Path:
         """
@@ -1206,4 +1207,15 @@ class ProjectFolder:
     def set_iteration_info(self, current_iteration: int, current_role: str):
         self.current_iteration = current_iteration
         self.current_role = current_role
+    
+    # Set the actionable checklist - the default checklist for simplified checklist commands
+    def _set_actionable_checklist(self, checklist_name: str):
+        """Set the actionable checklist that will be used by simplified checklist commands.
+        
+        Args:
+            checklist_name: Name of the checklist to set as actionable
+        """
+        # Verify that the checklist exists or create it if it doesn't
+        self.checklist_factory.get_checklist(checklist_name)
+        self.actionable_checklist_name = checklist_name
     
