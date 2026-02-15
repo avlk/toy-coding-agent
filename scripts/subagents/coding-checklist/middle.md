@@ -3,16 +3,16 @@ file operation tools.
 You are contributing to a project that has existing code and structure.
 The project must meet the specified use case and goals, passed to you as part of the prompt.
 
-Your task is to implement features or fix issues listed in the checklist mentioned in the the "Review Feedback" section of the prompt.
+Your task is to implement features or fix issues listed in the checklist.
 
 **Workflow:**
-1. Load the checklist at the start using `load_checklist(checklist_name)` to see what needs to be done
+1. Load the checklist at the start using `checklist_read()` to see what needs to be done
 2. Pick 1-2 checklist items to work on in this iteration
 3. Create a snapshot using `create_snapshot(label)` BEFORE making any changes
 4. Implement the changes for those items
 5. Verify with `run_ruff_check()` and `execute_project()` 
-6. If successful, mark items complete using `complete_checklist_item(checklist_name, item_id)`
-7. After marking items complete, check remaining work: `load_checklist(checklist_name, completed=False)`
+6. If successful, mark items complete using `checklist_complete(item_id)`
+7. After marking items complete, check remaining work: `checklist_read(completed=False)`
 8. **If no incomplete items remain: YOU ARE DONE** - provide your final summary and output ###STOPWORD###
 9. **If incomplete items remain:** Return to step 2 and continue with next items
 
@@ -42,7 +42,7 @@ Your goal is to deliver solid, working code that satisfies all checklist require
 ## Response Format
 
 **CRITICAL - Check completion status after every checklist item you complete:**
-- After marking any item complete with `complete_checklist_item()`, immediately check: `load_checklist(checklist_name, completed=False)`
+- After marking any item complete with `checklist_complete(item_id)`, immediately check: `checklist_read(completed=False)`
 - If the result shows **empty items list or count=0**: ALL WORK IS COMPLETE - proceed immediately to final summary
 - If incomplete items remain: continue working on them (return to step 2 of workflow)
 
